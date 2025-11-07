@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
+import path from 'path';
 
 import { createVectorStore } from './factories/vector-store.factory.js';
 import type { IVectorStore } from './interfaces/vector-store.interface.js';
@@ -27,7 +28,21 @@ export async function createServer() {
   });
 
   if (appConfig.security.helmetEnabled) {
-    await fastify.register(helmet);
+    await fastify.register(helmet, {
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'"],
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          mediaSrc: ["'self'"],
+          frameSrc: ["'none'"],
+        },
+      },
+    });
   }
 
   await fastify.register(cors, {
@@ -48,10 +63,15 @@ export async function createServer() {
   await fastify.addHook('preHandler', metricsMiddleware);
   await fastify.addHook('onResponse', metricsResponseHook);
 
-  // Serve static files from root directory
+  // Serve static files from src directory (index.html, search.js, styles.css)
   await fastify.register(fastifyStatic, {
-    root: process.cwd(),
+    root: path.join(process.cwd(), 'src'),
     prefix: '/',
+  });
+  
+  // Explicit route for root to serve index.html
+  fastify.get('/', async (request, reply) => {
+    return reply.sendFile('index.html');
   });
 
   // Initialize vector store using factory

@@ -20,8 +20,6 @@ COPY --from=deps --chown=ca_embed:ca_embed /app/node_modules ./node_modules
 COPY --from=build --chown=ca_embed:ca_embed /app/dist ./dist
 COPY --from=build --chown=ca_embed:ca_embed /app/src ./src
 COPY --from=build --chown=ca_embed:ca_embed /app/package.json ./
-COPY --from=build --chown=ca_embed:ca_embed /app/index.html ./
-COPY --from=build --chown=ca_embed:ca_embed /app/search.js ./
 
 RUN mkdir -p data && chown ca_embed:ca_embed data
 

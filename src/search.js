@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show loading state
         searchButton.disabled = true;
         searchButton.textContent = 'Searching...';
-        resultsSection.style.display = 'block';
+        resultsSection.classList.remove('hidden');
         resultsContainer.innerHTML = '<div class="loading"><div class="spinner"></div><p>Searching...</p></div>';
 
         try {
@@ -183,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="toggle-icon">▼</span>
                         Show Details
                     </button>
-                    <div class="result-details" id="details-${index}" style="display: none;">
+                    <div class="result-details hidden" id="details-${index}">
                         <div class="detail-section">
                             <h4>Metadata</h4>
                             <pre class="metadata-json">${highlightedJson}</pre>
@@ -200,12 +200,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 const details = document.getElementById(`details-${index}`);
                 const icon = this.querySelector('.toggle-icon');
                 
-                if (details.style.display === 'none') {
-                    details.style.display = 'block';
+                if (details.classList.contains('hidden')) {
+                    details.classList.remove('hidden');
                     icon.textContent = '▲';
                     this.innerHTML = '<span class="toggle-icon">▲</span> Hide Details';
                 } else {
-                    details.style.display = 'none';
+                    details.classList.add('hidden');
                     icon.textContent = '▼';
                     this.innerHTML = '<span class="toggle-icon">▼</span> Show Details';
                 }
@@ -214,7 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function showError(message) {
-        resultsSection.style.display = 'block';
+        resultsSection.classList.remove('hidden');
         resultsContainer.innerHTML = `
             <div class="error-message">
                 <strong>Error:</strong> ${escapeHtml(message)}
