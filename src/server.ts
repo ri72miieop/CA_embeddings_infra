@@ -36,7 +36,7 @@ export async function createServer() {
           styleSrc: ["'self'"],
           imgSrc: ["'self'", "data:", "https:"],
           connectSrc: ["'self'"],
-          fontSrc: ["'self'"],
+          fontSrc: ["'self'", "data:"],
           objectSrc: ["'none'"],
           mediaSrc: ["'self'"],
           frameSrc: ["'none'"],
@@ -62,17 +62,6 @@ export async function createServer() {
   await fastify.addHook('preHandler', correlationMiddleware);
   await fastify.addHook('preHandler', metricsMiddleware);
   await fastify.addHook('onResponse', metricsResponseHook);
-
-  // Serve static files from src directory (index.html, search.js, styles.css)
-  await fastify.register(fastifyStatic, {
-    root: path.join(process.cwd(), 'src'),
-    prefix: '/',
-  });
-  
-  // Explicit route for root to serve index.html
-  fastify.get('/', async (request, reply) => {
-    return reply.sendFile('index.html');
-  });
 
   // Initialize vector store using factory
   const embeddingService = createVectorStore(appConfig.database);
@@ -112,6 +101,26 @@ export async function createServer() {
   (fastify as any).embeddingService = embeddingService;
   (fastify as any).embeddingGenerationService = embeddingGenerationService;
   (fastify as any).embeddingWriteQueue = embeddingWriteQueue;
+
+  // Serve static files from src directory (index.html, search.js, styles.css)
+  // Register BEFORE API routes so static files are available
+  await fastify.register(fastifyStatic, {
+    root: path.join(process.cwd(), 'src'),
+    prefix: '/',
+  });
+
+  // Explicit routes for static files to ensure they're served
+  fastify.get('/', async (request, reply) => {
+    return reply.sendFile('index.html');
+  });
+  
+  fastify.get('/search.js', async (request, reply) => {
+    return reply.sendFile('search.js');
+  });
+  
+  fastify.get('/styles.css', async (request, reply) => {
+    return reply.sendFile('styles.css');
+  });
 
   await fastify.register(embeddingRoutes, { embeddingService });
   await fastify.register(healthRoutes, { embeddingService });
