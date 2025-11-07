@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:blog.wilsonl.in)",
+      "WebFetch(domain:github.com)",
+      "Bash(bun init:*)",
+      "Bash(bun install:*)",
+      "Bash(bun info:*)",
+      "Bash(npm view:*)",
+      "Bash(chmod:*)",
+      "Bash(bun run:*)",
+      "Bash(bun test:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(npm run build:*)",
+      "Bash(bun remove:*)",
+      "Bash(bun add:*)",
+      "WebFetch(domain:deepinfra.com)",
+      "WebSearch",
+      "Bash(npm run typecheck:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)",
+      "Bash(taskkill:*)",
+      "Bash(Get-Process -Name \"bun\")",
+      "Bash(Stop-Process -Force)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(cmd /c:*)",
+      "Read(//p/**)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "Bash(bun view:*)",
+      "WebFetch(domain:docs.deepinfra.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,155 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+
+import { createVectorStore } from './factories/vector-store.factory.js';
+import type { IVectorStore } from './interfaces/vector-store.interface.js';
+import { EmbeddingGenerationService } from './services/embedding-generation-service.js';
+import { EmbeddingWriteQueueManager } from './services/EmbeddingWriteQueueManager.js';
+import { embeddingRoutes, healthRoutes, embeddingGenerationRoutes } from './api/index.js';
+import { correlationMiddleware, metricsMiddleware, metricsResponseHook } from './middleware/index.js';
+import { logger } from './observability/logger.js';
+import { initializeTracing, shutdownTracing } from './observability/tracing.js';
+import { initializeMetrics, closeMetrics } from './observability/metrics.js';
+import { appConfig } from './config/index.js';
+
+export async function createServer() {
+  initializeTracing();
+
+  // Initialize persistent metrics
+  await initializeMetrics();
+
+  const fastify = Fastify({
+    logger: false,
+    trustProxy: true,
+  });
+
+  if (appConfig.security.helmetEnabled) {
+    await fastify.register(helmet);
+  }
+
+  await fastify.register(cors, {
+    origin: appConfig.security.corsOrigin === '*' ? true : appConfig.security.corsOrigin,
+    credentials: true,
+  });
+
+  await fastify.register(rateLimit, {
+    max: appConfig.rateLimit.max,
+    timeWindow: appConfig.rateLimit.windowMs,
+    errorResponseBuilder: () => ({
+      error: 'Rate limit exceeded',
+      message: `Too many requests, please try again later.`,
+    }),
+  });
+
+  await fastify.addHook('preHandler', correlationMiddleware);
+  await fastify.addHook('preHandler', metricsMiddleware);
+  await fastify.addHook('onResponse', metricsResponseHook);
+
+  // Serve static files from root directory
+  await fastify.register(fastifyStatic, {
+    root: process.cwd(),
+    prefix: '/',
+  });
+
+  // Initialize vector store using factory (supports CoreNN and Qdrant)
+  const embeddingService = createVectorStore(appConfig.database);
+  await embeddingService.initialize();
+  
+  logger.info({ 
+    vectorStore: appConfig.database.type,
+    dimension: appConfig.database.dimension 
+  }, 'Vector store initialized');
+
+  // Initialize embedding generation service if enabled
+  let embeddingGenerationService: EmbeddingGenerationService | null = null;
+  let embeddingWriteQueue: EmbeddingWriteQueueManager | null = null;
+  
+  if (appConfig.embeddingGeneration?.enabled) {
+    embeddingGenerationService = new EmbeddingGenerationService(appConfig.embeddingGeneration);
+    await embeddingGenerationService.initialize();
+
+    // Initialize write queue for better parallel processing
+    embeddingWriteQueue = new EmbeddingWriteQueueManager(
+      appConfig.embeddingGeneration.storage.path || './data',
+      embeddingService,
+      {
+        batchSize: 500,
+        processIntervalMs: 1000,
+        maxRetries: 3,
+        maxFilesRetained: appConfig.embeddingGeneration.queue?.maxFilesRetained || 100,
+        maxParallelFiles: appConfig.embeddingGeneration.queue?.maxParallelFiles || 5,
+        insertChunkSize: appConfig.embeddingGeneration.queue?.insertChunkSize || 1000
+      }
+    );
+    await embeddingWriteQueue.initialize();
+    logger.info('Embedding write queue initialized for parallel processing');
+  }
+
+  // Store services in fastify context for cross-service access
+  (fastify as any).embeddingService = embeddingService;
+  (fastify as any).embeddingGenerationService = embeddingGenerationService;
+  (fastify as any).embeddingWriteQueue = embeddingWriteQueue;
+
+  await fastify.register(embeddingRoutes, { embeddingService });
+  await fastify.register(healthRoutes, { embeddingService });
+
+  if (embeddingGenerationService) {
+    await fastify.register(embeddingGenerationRoutes, { 
+      embeddingGenerationService,
+      embeddingWriteQueue: embeddingWriteQueue || undefined
+    });
+  }
+
+  await fastify.ready();
+
+  const shutdown = async (signal: string) => {
+    logger.info(`${signal} received, shutting down gracefully`);
+    
+    // Shutdown write queue first (waits for current processing to complete)
+    if (embeddingWriteQueue) {
+      const stats = await embeddingWriteQueue.getStats();
+      logger.info({
+        pendingItems: stats.queue.totalPendingItems,
+        processingFiles: stats.queue.processingFiles,
+        completedFiles: stats.completed.totalFiles
+      }, 'Final queue stats before shutdown');
+      
+      await embeddingWriteQueue.shutdown();
+      logger.info('Write queue shutdown complete');
+    }
+    
+    await fastify.close();
+    await embeddingService.close();
+    await closeMetrics();
+    await shutdownTracing();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  return { fastify, embeddingService, embeddingGenerationService };
+}
+
+export async function startServer() {
+  try {
+    const { fastify } = await createServer();
+
+    await fastify.listen({
+      port: appConfig.server.port,
+      host: appConfig.server.host,
+    });
+
+    logger.info({
+      port: appConfig.server.port,
+      host: appConfig.server.host,
+      environment: appConfig.server.environment,
+    }, 'Server started successfully');
+  } catch (error) {
+    logger.error({ error }, 'Failed to start server');
+    process.exit(1);
+  }
+}

@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  embedscnn:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+      - "9090:9090"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - CORENN_DB_PATH=/app/data/embeddings.db
+      - VECTOR_DIMENSION=768
+      - ENABLE_METRICS=true
+      - METRICS_PORT=9090
+      - ENABLE_TRACING=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+      - LOG_LEVEL=info
+    volumes:
+      - embeddings_data:/app/data
+    depends_on:
+      - jaeger
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
+volumes:
+  embeddings_data:
+  prometheus_data:
+  grafana_data:
