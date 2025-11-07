@@ -25,6 +25,7 @@
   "dependencies": {
     "@ai-sdk/deepinfra": "^1.0.20",
     "@ai-sdk/openai": "^2.0.53",
+    "@corenn/node": "^0.3.1",
     "@fastify/cors": "^8.4.0",
     "@fastify/helmet": "^11.1.1",
     "@fastify/rate-limit": "^8.0.3",
