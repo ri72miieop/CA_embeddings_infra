@@ -1,17 +1,17 @@
 # CA_Embed - Production-Ready Embeddings Service
 
-A high-performance, scalable embeddings serving solution built with TypeScript and Bun. Supports multiple vector database backends (CoreNN and Qdrant) with comprehensive observability and production-ready features.
+A high-performance, scalable embeddings serving solution built with TypeScript and Bun. Uses Qdrant as the vector database backend with comprehensive observability and production-ready features.
 
 ## 🚀 Features
 
-- **Multi-Backend Support**: Choose between CoreNN (local, high-performance) or Qdrant (cloud-native, advanced features)
-- **High Performance**: Handle billion-scale vector searches in <15ms
-- **Advanced Search**: Metadata filtering and payload-based search (Qdrant)
+- **Qdrant Vector Database**: Cloud-native vector database with advanced features
+- **High Performance**: Handle billion-scale vector searches efficiently
+- **Advanced Search**: Metadata filtering and payload-based search
 - **Production Ready**: Rate limiting, health checks, graceful shutdown
 - **Full Observability**: Metrics, tracing, structured logging, dashboards
 - **Type Safe**: Full TypeScript implementation with Zod validation
 - **Containerized**: Docker deployment with multi-stage builds
-- **Flexible Architecture**: Plugin-based design for easy backend switching
+- **Scalable Architecture**: Built for distributed systems and horizontal scaling
 
 ## 📊 Architecture
 
@@ -23,10 +23,10 @@ A high-performance, scalable embeddings serving solution built with TypeScript a
 ├─────────────────────────────────────────────────────────────┤
 │  Vector Store Factory (Plugin Architecture)                │
 ├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────┐    ┌─────────────────────────┐   │
-│  │ CoreNN Vector Store │ OR │ Qdrant Vector Store     │   │
-│  │ (Local, Fast)       │    │ (Cloud, Feature-Rich)   │   │
-│  └─────────────────────┘    └─────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────┐       │
+│  │         Qdrant Vector Store                     │       │
+│  │         (Cloud-Native, Feature-Rich)            │       │
+│  └─────────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -37,20 +37,15 @@ A high-performance, scalable embeddings serving solution built with TypeScript a
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Vector Store Backends
-
-**CoreNN** - High-performance local vector database
-- Billion-scale vector support
-- Memory-efficient compression (96GB vs 3TB traditional)
-- Local file-based storage (RocksDB + HNSW)
-- Best for: Local deployments, maximum speed
+### Vector Store Backend
 
 **Qdrant** - Cloud-native vector database
 - Collection-based storage with indexing
 - Advanced metadata filtering and payload search
 - Horizontal scalability
+- Billion-scale vector support
 - Cloud and self-hosted options
-- Best for: Distributed systems, advanced filtering needs
+- Best for: Production deployments, advanced filtering needs, distributed systems
 
 ## 🛠 Quick Start
 
@@ -68,31 +63,31 @@ A high-performance, scalable embeddings serving solution built with TypeScript a
    bun install
    ```
 
-   **Note**: The project uses CoreNN directly from the GitHub repository since the npm package was incomplete. The installation includes the real CoreNN library with all its performance benefits.
-
-2. **Environment Setup**
+2. **Start Qdrant**
    ```bash
-   # Create .env file with your configuration
-   # See MIGRATION_GUIDE.md for detailed configuration options
-   
-   # Minimum required:
-   VECTOR_STORE=corenn  # or 'qdrant'
-   VECTOR_DIMENSION=1024
-   
-   # For CoreNN:
-   CORENN_DB_PATH=./data/embeddings.db
-   
-   # For Qdrant:
-   # QDRANT_URL=http://localhost:6333
-   # QDRANT_COLLECTION_NAME=embeddings
+   # Using Docker
+   docker run -p 6333:6333 -p 6334:6334 \
+     -v $(pwd)/qdrant_storage:/qdrant/storage:z \
+     qdrant/qdrant
    ```
 
-3. **Start Development Server**
+3. **Environment Setup**
+   ```bash
+   # Create .env file with your configuration
+   
+   # Minimum required:
+   VECTOR_STORE=qdrant
+   VECTOR_DIMENSION=1024
+   QDRANT_URL=http://localhost:6333
+   QDRANT_COLLECTION_NAME=embeddings
+   ```
+
+4. **Start Development Server**
    ```bash
    bun run dev
    ```
 
-4. **Run Tests**
+5. **Run Tests**
    ```bash
    bun test
    ```
@@ -108,6 +103,7 @@ A high-performance, scalable embeddings serving solution built with TypeScript a
 2. **Access Services**
    - API: http://localhost:3000
    - Metrics: http://localhost:3000/metrics
+   - Qdrant: http://localhost:6333/dashboard
    - Grafana: http://localhost:3001 (admin/admin)
    - Jaeger: http://localhost:16686
    - Prometheus: http://localhost:9091
@@ -146,7 +142,7 @@ Content-Type: application/json
 }
 ```
 
-**Note**: Metadata filtering (`filter`) is only supported with Qdrant backend.
+**Note**: Advanced metadata filtering is fully supported with Qdrant.
 
 ### Delete Embeddings
 ```bash
@@ -178,12 +174,9 @@ GET /metrics             # Prometheus metrics
 | `HOST` | `0.0.0.0` | Server host |
 | `NODE_ENV` | `development` | Environment mode |
 | **Vector Store** | | |
-| `VECTOR_STORE` | `corenn` | Backend: `corenn` or `qdrant` |
+| `VECTOR_STORE` | `qdrant` | Backend type (currently only `qdrant`) |
 | `VECTOR_DIMENSION` | `1024` | Vector dimensions |
-| **CoreNN** (when `VECTOR_STORE=corenn`) | | |
-| `CORENN_DB_PATH` | `./data/embeddings.db` | Database file path |
-| `INDEX_TYPE` | `hnsw` | Index type |
-| **Qdrant** (when `VECTOR_STORE=qdrant`) | | |
+| **Qdrant Configuration** | | |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
 | `QDRANT_API_KEY` | - | API key (for Qdrant Cloud) |
 | `QDRANT_COLLECTION_NAME` | `embeddings` | Collection name |
@@ -195,8 +188,6 @@ GET /metrics             # Prometheus metrics
 | **Rate Limiting** | | |
 | `RATE_LIMIT_MAX` | `100` | Requests per window |
 | `RATE_LIMIT_WINDOW` | `60000` | Rate limit window (ms) |
-
-See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for detailed configuration and migration instructions.
 
 ## 🔧 Production Deployment
 
@@ -289,21 +280,9 @@ The service provides multiple health check endpoints:
 
 ## ⚠️ Current Limitations
 
-### CoreNN Backend
-- **Delete Operations**: CoreNN v0.3.1 doesn't have a remove/delete method yet. Delete requests are logged but not executed.
-- **Metadata Filtering**: Metadata is stored but cannot be used for filtering searches.
-
-### Qdrant Backend
-- **Local Storage**: CoreNN is more memory-efficient for local deployments.
-- **Performance**: Slightly higher latency than CoreNN for single-node deployments.
-
-## 🔄 Migration Between Backends
-
-See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for:
-- Switching from CoreNN to Qdrant
-- Switching from Qdrant to CoreNN
-- Data migration strategies
-- Feature comparison
+- **Qdrant Dependency**: Requires a running Qdrant instance
+- **Network Latency**: Performance depends on network latency to Qdrant server
+- **Resource Requirements**: Qdrant needs dedicated resources for optimal performance
 
 ## 🔒 Security Features
 
@@ -316,11 +295,11 @@ See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for:
 
 ## 📊 Performance Characteristics
 
-- **Latency**: <15ms P95 for search operations
-- **Throughput**: 1000+ requests/second
-- **Scale**: Up to 1 billion vectors
-- **Memory**: 96GB for billion vectors (vs 3TB traditional)
+- **Latency**: Low latency for search operations (depends on Qdrant configuration)
+- **Throughput**: High throughput with horizontal scaling
+- **Scale**: Billion-scale vector support
 - **Accuracy**: High recall with HNSW indexing
+- **Filtering**: Advanced metadata filtering without performance degradation
 
 ## 🤝 Contributing
 

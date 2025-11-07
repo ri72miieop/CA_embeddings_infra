@@ -22,7 +22,6 @@
         "ai": "^5.0.54",
         "chalk": "^5.6.2",
         "commander": "^14.0.1",
-        "corenn": "github:wilsonzlin/corenn",
         "dotenv": "^16.3.1",
         "fastify": "^4.24.3",
         "hyparquet": "^1.20.1",
@@ -335,8 +334,6 @@
     "content-disposition": ["content-disposition@0.5.4", "", { "dependencies": { "safe-buffer": "5.2.1" } }, "sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ=="],
 
     "cookie": ["cookie@0.7.2", "", {}, "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w=="],
-
-    "corenn": ["corenn@github:wilsonzlin/corenn#77c166a", {}, "wilsonzlin-CoreNN-77c166a"],
 
     "cpu-features": ["cpu-features@0.0.10", "", { "dependencies": { "buildcheck": "~0.0.6", "nan": "^2.19.0" } }, "sha512-9IkYqtX3YHPCzoVg1Py+o9057a3i0fp7S530UWokCSaFVTc7CwXPRiOjRjBQQ18ZCNafx78YfnG+HALxtVmOGA=="],
 

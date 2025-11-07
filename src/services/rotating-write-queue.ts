@@ -39,7 +39,7 @@ export class RotatingEmbeddingWriteQueue {
     private maxRetries = 3,
     private maxFilesRetained = 50, // Keep max 50 completed files before cleanup
     private maxParallelFiles = 5, // Process up to 5 files in parallel
-    private insertChunkSize = 1000 // Insert 1000 embeddings at a time to CoreNN
+    private insertChunkSize = 1000 // Insert 1000 embeddings at a time to vector store
   ) {
     this.queueDir = path.join(dataDir, 'embedding-queue');
     this.completedDir = path.join(this.queueDir, 'completed');
@@ -329,9 +329,9 @@ export class RotatingEmbeddingWriteQueue {
         
         for (const item of batch) {
           try {
-            // OPTIMIZATION: Chunk embeddings into smaller groups for faster CoreNN inserts
+            // OPTIMIZATION: Chunk embeddings into smaller groups for faster inserts
             // Insert embeddings in smaller chunks instead of all at once
-            // This reduces RocksDB write amplification and improves throughput
+            // This improves throughput and reduces memory pressure
             for (let j = 0; j < item.embeddings.length; j += this.insertChunkSize) {
               const embeddingChunk = item.embeddings.slice(j, j + this.insertChunkSize);
               await this.embeddingService.insert(embeddingChunk);

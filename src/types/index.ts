@@ -17,7 +17,7 @@ export interface SearchQuery {
   filter?: Record<string, any>; // Metadata filter for advanced search (Qdrant)
 }
 
-export type VectorStoreType = 'corenn' | 'qdrant';
+export type VectorStoreType = 'qdrant';
 
 export interface QdrantConfig {
   url: string;
@@ -30,9 +30,6 @@ export interface QdrantConfig {
 export interface DatabaseConfig {
   type: VectorStoreType;
   dimension: number;
-  // CoreNN-specific config
-  path?: string;
-  indexType?: string;
   // Qdrant-specific config
   qdrant?: QdrantConfig;
 }

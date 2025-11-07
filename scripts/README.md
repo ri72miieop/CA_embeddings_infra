@@ -325,7 +325,7 @@ SHARD_NUMBER=4 MAX_PARALLEL_FILES=10 MAX_PARALLEL_BATCHES=2 BATCH_SIZE=1000
 
 ## Queue Items Analysis
 
-This script analyzes queue items (failed or completed) and checks which ones already exist in the CoreNN database.
+This script analyzes queue items (failed or completed) and checks which ones already exist in the Qdrant vector store.
 
 ### Usage
 
@@ -349,24 +349,25 @@ bun run scripts/analyze-failed-queue-items.ts --help
 You can customize the paths using environment variables:
 
 ```bash
-# Custom database path
-CORENN_DB_PATH=./data/embeddings.db bun run scripts/analyze-failed-queue-items.ts
+# Qdrant configuration
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION_NAME=embeddings 
+QDRANT_API_KEY=your_api_key
 
 # Custom queue directory
-QUEUE_DIR=./data/embedding-calls/embedding-queue bun run scripts/analyze-failed-queue-items.ts
-
+QUEUE_DIR=./data/embedding-calls/embedding-queue 
 # Custom vector dimension
-VECTOR_DIMENSION=1024 bun run scripts/analyze-failed-queue-items.ts
+VECTOR_DIMENSION=1024 bun
 ```
 
 ### What It Does
 
-1. **Connects to your CoreNN database**
+1. **Connects to your Qdrant instance**
 2. **Finds all queue files** (`.failed.jsonl` or `.completed.jsonl`) in your queue directory
 3. **Extracts all embeddings** (keys + vectors) from queue items
-4. **Uses vector similarity search** to check if each embedding exists in the database
-   - Queries the database with each vector
-   - Considers it a match if distance < 0.0001 and key matches
+4. **Queries Qdrant** to check if each embedding exists in the collection
+   - Searches for exact or near-exact matches using vector similarity
+   - Considers it a match if the key exists in the collection
 5. **Generates a comprehensive report** showing:
    - Per-file statistics (how many embeddings from each file are already in DB)
    - Overall statistics across all queue files

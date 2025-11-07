@@ -2,7 +2,7 @@ import type { EmbeddingVector, SearchResult, SearchQuery } from '../types/index.
 
 /**
  * Interface for vector store implementations
- * All vector store backends (CoreNN, Qdrant, etc.) must implement this interface
+ * All vector store backends (Qdrant, etc.) must implement this interface
  */
 export interface IVectorStore {
   /**

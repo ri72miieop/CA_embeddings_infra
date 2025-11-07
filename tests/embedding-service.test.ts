@@ -2,31 +2,26 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { createVectorStore } from '../src/factories/vector-store.factory';
 import type { IVectorStore } from '../src/interfaces/vector-store.interface';
 import type { DatabaseConfig } from '../src/types';
-import fs from 'fs/promises';
-import path from 'path';
 
 describe('EmbeddingService', () => {
   let service: IVectorStore;
-  const testDbPath = './test-data/test-embeddings.db';
   const config: DatabaseConfig = {
-    type: 'corenn',
-    path: testDbPath,
+    type: 'qdrant',
     dimension: 3,
+    qdrant: {
+      url: 'http://localhost:6333',
+      port: 6333,
+      collectionName: 'test-embeddings',
+    },
   };
 
   beforeAll(async () => {
-    await fs.mkdir(path.dirname(testDbPath), { recursive: true });
     service = createVectorStore(config);
     await service.initialize();
   });
 
   afterAll(async () => {
     await service.close();
-    try {
-      await fs.rm(path.dirname(testDbPath), { recursive: true });
-    } catch (error) {
-      // Ignore cleanup errors
-    }
   });
 
   it('should initialize successfully', () => {

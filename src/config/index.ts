@@ -10,12 +10,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
   // Vector store configuration
-  VECTOR_STORE: z.enum(['corenn', 'qdrant']).default('corenn'),
+  VECTOR_STORE: z.enum(['qdrant']).default('qdrant'),
   VECTOR_DIMENSION: z.string().default('1024').transform(Number),
-
-  // CoreNN-specific configuration
-  CORENN_DB_PATH: z.string().default('./data/embeddings.db'),
-  INDEX_TYPE: z.string().default('hnsw'),
 
   // Qdrant-specific configuration
   QDRANT_URL: z.string().default('http://localhost:6333'),
@@ -63,17 +59,14 @@ export const appConfig: AppConfig = {
   database: {
     type: env.VECTOR_STORE,
     dimension: env.VECTOR_DIMENSION,
-    // CoreNN-specific
-    path: env.CORENN_DB_PATH,
-    indexType: env.INDEX_TYPE,
     // Qdrant-specific
-    qdrant: env.VECTOR_STORE === 'qdrant' ? {
+    qdrant: {
       url: env.QDRANT_URL,
       apiKey: env.QDRANT_API_KEY,
       port: env.QDRANT_PORT,
       collectionName: env.QDRANT_COLLECTION_NAME,
       timeout: env.QDRANT_TIMEOUT,
-    } : undefined,
+    },
   },
   observability: {
     enableMetrics: env.ENABLE_METRICS,

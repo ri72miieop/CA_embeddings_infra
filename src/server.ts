@@ -54,7 +54,7 @@ export async function createServer() {
     prefix: '/',
   });
 
-  // Initialize vector store using factory (supports CoreNN and Qdrant)
+  // Initialize vector store using factory
   const embeddingService = createVectorStore(appConfig.database);
   await embeddingService.initialize();
   

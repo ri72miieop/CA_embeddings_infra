@@ -7,7 +7,9 @@ describe('API Endpoints', () => {
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
-    process.env.CORENN_DB_PATH = './test-data/api-test.db';
+    process.env.VECTOR_STORE = 'qdrant';
+    process.env.QDRANT_URL = 'http://localhost:6333';
+    process.env.QDRANT_COLLECTION_NAME = 'test-embeddings';
     process.env.VECTOR_DIMENSION = '3';
     process.env.ENABLE_TRACING = 'false';
 

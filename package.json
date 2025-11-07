@@ -25,7 +25,6 @@
   "dependencies": {
     "@ai-sdk/deepinfra": "^1.0.20",
     "@ai-sdk/openai": "^2.0.53",
-    "corenn": "github:wilsonzlin/corenn",
     "@fastify/cors": "^8.4.0",
     "@fastify/helmet": "^11.1.1",
     "@fastify/rate-limit": "^8.0.3",
@@ -71,7 +70,7 @@
   "keywords": [
     "embeddings",
     "vector-database",
-    "corenn",
+    "qdrant",
     "typescript",
     "bun",
     "observability"
