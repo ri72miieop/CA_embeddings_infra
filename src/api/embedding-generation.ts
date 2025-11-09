@@ -7,6 +7,7 @@ import {
 } from '../utils/validation.js';
 import { createContextLogger } from '../observability/logger.js';
 import { appConfig } from '../config/index.js';
+import { apiKeyAuthMiddleware } from '../middleware/index.js';
 import type {
   GenerateEmbeddingsResponse,
   EmbeddingGenerationItem
@@ -21,7 +22,9 @@ const embeddingGenerationRoutes: FastifyPluginAsync<EmbeddingGenerationRoutes> =
 
   fastify.post<{
     Body: GenerateEmbeddingsInput;
-  }>('/embeddings/generate', async (request: FastifyRequest<{ Body: GenerateEmbeddingsInput }>, reply: FastifyReply) => {
+  }>('/embeddings/generate', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (request: FastifyRequest<{ Body: GenerateEmbeddingsInput }>, reply: FastifyReply) => {
     const correlationId = (request as any).correlationId;
     const contextLogger = createContextLogger({
       correlationId,
@@ -78,7 +81,9 @@ const embeddingGenerationRoutes: FastifyPluginAsync<EmbeddingGenerationRoutes> =
 
   fastify.post<{
     Body: GenerateEmbeddingsInput;
-  }>('/embeddings/generate-and-store', async (request: FastifyRequest<{ Body: GenerateEmbeddingsInput }>, reply: FastifyReply) => {
+  }>('/embeddings/generate-and-store', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (request: FastifyRequest<{ Body: GenerateEmbeddingsInput }>, reply: FastifyReply) => {
     const correlationId = (request as any).correlationId;
     const contextLogger = createContextLogger({
       correlationId,
@@ -291,7 +296,9 @@ const embeddingGenerationRoutes: FastifyPluginAsync<EmbeddingGenerationRoutes> =
     });
 
     // Retry failed items
-    fastify.post('/embeddings/queue/retry-failed', async (request: FastifyRequest, reply: FastifyReply) => {
+    fastify.post('/embeddings/queue/retry-failed', {
+      preHandler: apiKeyAuthMiddleware
+    }, async (request: FastifyRequest, reply: FastifyReply) => {
       const correlationId = (request as any).correlationId;
       const contextLogger = createContextLogger({
         correlationId,

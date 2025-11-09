@@ -56,6 +56,7 @@ export interface RateLimitConfig {
 export interface SecurityConfig {
   corsOrigin: string;
   helmetEnabled: boolean;
+  apiKeys: string[];
 }
 
 export interface EmbeddingProviderConfig {

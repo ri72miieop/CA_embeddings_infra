@@ -21,6 +21,7 @@ import { MissingQuotedTweetsLogger } from '../utils/missing-quoted-tweets-logger
 interface ProcessParquetOptions {
   file: string;
   url: string;
+  apiKey?: string;
   batchSize: string;
   parallel: string;
   textColumn: string;
@@ -1187,7 +1188,7 @@ export async function processParquetCommand(options: ProcessParquetOptions) {
     }
 
     // Initialize components
-    const client = new CA_EmbedClient(options.url);
+    const client = new CA_EmbedClient(options.url, options.apiKey);
     const stateManager = new StateManager(options.resumeFile);
     const progressTracker = new ProgressTracker();
 

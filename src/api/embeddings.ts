@@ -12,6 +12,7 @@ import {
 } from '../utils/validation.js';
 import { createContextLogger } from '../observability/logger.js';
 import { appConfig } from '../config/index.js';
+import { apiKeyAuthMiddleware } from '../middleware/index.js';
 
 interface EmbeddingRoutes {
   embeddingService: IVectorStore;
@@ -21,7 +22,9 @@ const embeddingRoutes: FastifyPluginAsync<EmbeddingRoutes> = async (fastify, { e
 
   fastify.post<{
     Body: BulkInsertInput;
-  }>('/embeddings', async (request: FastifyRequest<{ Body: BulkInsertInput }>, reply: FastifyReply) => {
+  }>('/embeddings', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (request: FastifyRequest<{ Body: BulkInsertInput }>, reply: FastifyReply) => {
     const correlationId = (request as any).correlationId;
     const contextLogger = createContextLogger({
       correlationId,
@@ -139,7 +142,9 @@ const embeddingRoutes: FastifyPluginAsync<EmbeddingRoutes> = async (fastify, { e
 
   fastify.delete<{
     Body: BulkDeleteInput;
-  }>('/embeddings', async (request: FastifyRequest<{ Body: BulkDeleteInput }>, reply: FastifyReply) => {
+  }>('/embeddings', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (request: FastifyRequest<{ Body: BulkDeleteInput }>, reply: FastifyReply) => {
     const correlationId = (request as any).correlationId;
     const contextLogger = createContextLogger({
       correlationId,
