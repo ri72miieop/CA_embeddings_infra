@@ -33,6 +33,9 @@ const envSchema = z.object({
   HELMET_ENABLED: z.string().default('true').transform(val => val === 'true'),
   API_KEYS: z.string().optional().transform(val => val ? val.split(',').map(k => k.trim()) : []),
 
+  // Client API key for embedding service clients (CLI, scripts, etc.)
+  EMBED_SERVICE_CLIENT_API: z.string().optional(),
+
   EMBEDDING_GENERATION_ENABLED: z.string().default('false').transform(val => val === 'true'),
   EMBEDDING_PROVIDER: z.enum(['deepinfra', 'openai', 'local']).default('deepinfra'),
   EMBEDDING_MODEL: z.string().default('Qwen/Qwen3-Embedding-4B'),

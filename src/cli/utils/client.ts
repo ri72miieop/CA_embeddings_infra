@@ -31,17 +31,29 @@ interface SearchResponse {
 
 export class CA_EmbedClient {
   private baseUrl: string;
+  private apiKey?: string;
 
-  constructor(baseUrl: string) {
+  constructor(baseUrl: string, apiKey?: string) {
     this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
+    this.apiKey = apiKey;
+  }
+
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+
+    return headers;
   }
 
   async generateEmbeddings(items: EmbeddingItem[]): Promise<GenerateEmbeddingsResponse> {
     const response = await fetch(`${this.baseUrl}/embeddings/generate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ items }),
     });
 
@@ -55,9 +67,7 @@ export class CA_EmbedClient {
   async generateAndStoreEmbeddings(items: EmbeddingItem[]): Promise<GenerateEmbeddingsResponse> {
     const response = await fetch(`${this.baseUrl}/embeddings/generate-and-store`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify({ items }),
     });
 
@@ -76,9 +86,7 @@ export class CA_EmbedClient {
 
     const response = await fetch(`${this.baseUrl}/embeddings/search`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: this.getHeaders(),
       body: JSON.stringify(body),
     });
 

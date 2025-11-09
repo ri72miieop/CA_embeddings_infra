@@ -2,6 +2,7 @@ import chalk from 'chalk';
 
 interface SearchOptions {
   url: string;
+  apiKey?: string;
   k: number;
   threshold?: string;
   filter?: string;
@@ -9,7 +10,7 @@ interface SearchOptions {
 }
 
 export async function searchCommand(searchTerm: string, options: SearchOptions) {
-  const { url, k, threshold, filter, pretty } = options;
+  const { url, apiKey, k, threshold, filter, pretty } = options;
 
   try {
     console.log(chalk.blue('🔍 Performing semantic search...'));
@@ -46,12 +47,19 @@ export async function searchCommand(searchTerm: string, options: SearchOptions) 
       }
     }
 
+    // Prepare headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
     // Make API request
     const response = await fetch(`${url}/embeddings/search`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(requestBody),
     });
 
