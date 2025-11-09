@@ -67,9 +67,7 @@ const embeddingRoutes: FastifyPluginAsync<EmbeddingRoutes> = async (fastify, { e
 
   fastify.post<{
     Body: SearchQueryInput;
-  }>('/embeddings/search', {
-    preHandler: apiKeyAuthMiddleware
-  }, async (request: FastifyRequest<{ Body: SearchQueryInput }>, reply: FastifyReply) => {
+  }>('/embeddings/search', async (request: FastifyRequest<{ Body: SearchQueryInput }>, reply: FastifyReply) => {
     const correlationId = (request as any).correlationId;
     const contextLogger = createContextLogger({
       correlationId,

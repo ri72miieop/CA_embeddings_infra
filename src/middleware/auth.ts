@@ -4,8 +4,12 @@ import { appConfig } from '../config/index.js';
 export const apiKeyAuthMiddleware = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
   const { apiKeys } = appConfig.security;
 
-  // If no API keys are configured, allow all requests
+  // If no API keys are configured, reject the request with a configuration error
   if (!apiKeys || apiKeys.length === 0) {
+    reply.code(500).send({
+      error: 'Configuration Error',
+      message: 'API key authentication is required but no API keys are configured. Please configure API_KEYS environment variable.',
+    });
     return;
   }
 
