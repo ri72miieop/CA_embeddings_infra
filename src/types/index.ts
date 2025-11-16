@@ -138,6 +138,13 @@ export interface StoredEmbeddingCall {
   metadata?: Record<string, any>;
 }
 
+export interface SupabaseConfig {
+  enabled: boolean;
+  url: string;
+  anonKey: string;
+  maxTextLength?: number;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   database: DatabaseConfig;
@@ -145,4 +152,5 @@ export interface AppConfig {
   rateLimit: RateLimitConfig;
   security: SecurityConfig;
   embeddingGeneration?: EmbeddingGenerationConfig;
+  supabase?: SupabaseConfig;
 }

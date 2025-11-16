@@ -9,6 +9,7 @@ import { createVectorStore } from './factories/vector-store.factory.js';
 import type { IVectorStore } from './interfaces/vector-store.interface.js';
 import { EmbeddingGenerationService } from './services/embedding-generation-service.js';
 import { EmbeddingWriteQueueManager } from './services/EmbeddingWriteQueueManager.js';
+import { SupabaseListenerService } from './services/supabase-listener-service.js';
 import { embeddingRoutes, healthRoutes, embeddingGenerationRoutes } from './api/index.js';
 import { correlationMiddleware, metricsMiddleware, metricsResponseHook } from './middleware/index.js';
 import { logger } from './observability/logger.js';
@@ -102,6 +103,32 @@ export async function createServer() {
     }, 'SQLite embedding write queue initialized');
   }
 
+  // Initialize Supabase listener service if enabled
+  let supabaseListener: SupabaseListenerService | null = null;
+  
+  if (appConfig.supabase?.enabled) {
+    // Supabase listener requires embedding generation and write queue
+    if (!embeddingGenerationService || !embeddingWriteQueue) {
+      logger.warn('Supabase listener enabled but embedding generation or write queue not available. Skipping Supabase listener initialization.');
+    } else {
+      supabaseListener = new SupabaseListenerService(
+        {
+          supabaseUrl: appConfig.supabase.url,
+          supabaseKey: appConfig.supabase.anonKey,
+          maxTextLength: appConfig.supabase.maxTextLength,
+        },
+        embeddingService,
+        embeddingGenerationService,
+        embeddingWriteQueue
+      );
+      await supabaseListener.initialize();
+      logger.info({
+        supabaseUrl: appConfig.supabase.url,
+        maxTextLength: appConfig.supabase.maxTextLength || 30720
+      }, 'Supabase listener service initialized and subscribed');
+    }
+  }
+
   // Store services in fastify context for cross-service access
   (fastify as any).embeddingService = embeddingService;
   (fastify as any).embeddingGenerationService = embeddingGenerationService;
@@ -142,13 +169,21 @@ export async function createServer() {
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received, shutting down gracefully`);
     
-    // Shutdown write queue first (waits for current processing to complete)
+    // Shutdown Supabase listener first (unsubscribe from events)
+    if (supabaseListener) {
+      await supabaseListener.shutdown();
+      logger.info('Supabase listener shutdown complete');
+    }
+    
+    // Shutdown write queue (waits for current processing to complete)
     if (embeddingWriteQueue) {
       const stats = await embeddingWriteQueue.getStats();
       logger.info({
-        pendingItems: stats.queue.totalPendingItems,
-        processingFiles: stats.queue.processingFiles,
-        completedFiles: stats.completed.totalFiles
+        pending: stats.queue.pending,
+        processing: stats.queue.processing,
+        failed: stats.queue.failed,
+        completed: stats.queue.completed,
+        exported: stats.queue.exported
       }, 'Final queue stats before shutdown');
       
       await embeddingWriteQueue.shutdown();
