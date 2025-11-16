@@ -11,9 +11,15 @@ config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const embeddingServiceUrl = process.env.EMBEDDING_SERVICE_URL || 'http://localhost:3000';
+const embeddingServiceApiKey = process.env.EMBED_SERVICE_CLIENT_API;
 
 if (!supabaseUrl || !supabaseKey) {
   console.error('Error: SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment variables');
+  process.exit(1);
+}
+
+if (!embeddingServiceApiKey) {
+  console.error('Error: EMBED_SERVICE_CLIENT_API must be set in environment variables');
   process.exit(1);
 }
 
@@ -125,7 +131,10 @@ async function generateAndStoreEmbedding(
   
   const response = await fetch(`${embeddingServiceUrl}/embeddings/generate-and-store`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${embeddingServiceApiKey}`
+    },
     body: JSON.stringify(requestBody)
   });
   

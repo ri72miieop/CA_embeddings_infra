@@ -31,6 +31,7 @@ const envSchema = z.object({
 
   CORS_ORIGIN: z.string().default('*'),
   HELMET_ENABLED: z.string().default('true').transform(val => val === 'true'),
+  API_KEYS: z.string().optional().transform(val => val ? val.split(',').map(k => k.trim()) : []),
 
   EMBEDDING_GENERATION_ENABLED: z.string().default('false').transform(val => val === 'true'),
   EMBEDDING_PROVIDER: z.enum(['deepinfra', 'openai', 'local']).default('deepinfra'),
@@ -87,6 +88,7 @@ export const appConfig: AppConfig = {
   security: {
     corsOrigin: env.CORS_ORIGIN,
     helmetEnabled: env.HELMET_ENABLED,
+    apiKeys: env.API_KEYS,
   },
   embeddingGeneration: {
     enabled: env.EMBEDDING_GENERATION_ENABLED,
