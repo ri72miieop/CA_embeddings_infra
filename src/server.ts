@@ -80,21 +80,26 @@ export async function createServer() {
     embeddingGenerationService = new EmbeddingGenerationService(appConfig.embeddingGeneration);
     await embeddingGenerationService.initialize();
 
-    // Initialize write queue for better parallel processing
+    // Initialize SQLite write queue for better parallel processing
+    const queueDbPath = appConfig.embeddingGeneration.queue?.sqliteDbPath 
+      || path.join(appConfig.embeddingGeneration.storage.path || './data', 'embedding-queue.db');
+    
     embeddingWriteQueue = new EmbeddingWriteQueueManager(
-      appConfig.embeddingGeneration.storage.path || './data',
+      queueDbPath,
       embeddingService,
       {
-        batchSize: 500,
         processIntervalMs: 1000,
         maxRetries: 3,
-        maxFilesRetained: appConfig.embeddingGeneration.queue?.maxFilesRetained || 100,
-        maxParallelFiles: appConfig.embeddingGeneration.queue?.maxParallelFiles || 5,
-        insertChunkSize: appConfig.embeddingGeneration.queue?.insertChunkSize || 1000
+        insertChunkSize: appConfig.embeddingGeneration.queue?.insertChunkSize || 1000,
+        parquetExportThreshold: appConfig.embeddingGeneration.queue?.parquetExportThreshold || 50_000,
+        parquetExportDir: appConfig.embeddingGeneration.queue?.parquetExportDir
       }
     );
     await embeddingWriteQueue.initialize();
-    logger.info('Embedding write queue initialized for parallel processing');
+    logger.info({
+      dbPath: queueDbPath,
+      parquetExportThreshold: appConfig.embeddingGeneration.queue?.parquetExportThreshold || 50_000
+    }, 'SQLite embedding write queue initialized');
   }
 
   // Store services in fastify context for cross-service access

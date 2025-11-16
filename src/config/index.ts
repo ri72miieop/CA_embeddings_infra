@@ -42,10 +42,15 @@ const envSchema = z.object({
   EMBEDDING_STORAGE_ENABLED: z.string().default('true').transform(val => val === 'true'),
   EMBEDDING_STORAGE_PATH: z.string().default('./data/embedding-calls'),
   
-  // Queue performance settings
+  // Queue performance settings (deprecated, kept for backward compatibility)
   QUEUE_MAX_PARALLEL_FILES: z.string().default('5').transform(Number),
   QUEUE_INSERT_CHUNK_SIZE: z.string().default('1000').transform(Number),
   QUEUE_MAX_FILES_RETAINED: z.string().default('100').transform(Number),
+  
+  // SQLite Queue settings
+  QUEUE_PARQUET_EXPORT_THRESHOLD: z.string().default('50000').transform(Number),
+  QUEUE_SQLITE_DB_PATH: z.string().optional(),
+  QUEUE_PARQUET_EXPORT_DIR: z.string().optional(),
 });
 
 const env = envSchema.parse(process.env);
@@ -101,6 +106,9 @@ export const appConfig: AppConfig = {
       maxParallelFiles: env.QUEUE_MAX_PARALLEL_FILES,
       insertChunkSize: env.QUEUE_INSERT_CHUNK_SIZE,
       maxFilesRetained: env.QUEUE_MAX_FILES_RETAINED,
+      parquetExportThreshold: env.QUEUE_PARQUET_EXPORT_THRESHOLD,
+      sqliteDbPath: env.QUEUE_SQLITE_DB_PATH,
+      parquetExportDir: env.QUEUE_PARQUET_EXPORT_DIR,
     },
   },
 };

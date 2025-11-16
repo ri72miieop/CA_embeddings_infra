@@ -1,42 +1,57 @@
-import { RotatingEmbeddingWriteQueue } from './rotating-write-queue.js';
+import { SqliteEmbeddingQueue } from './sqlite-embedding-queue.js';
 import type { IVectorStore } from '../interfaces/vector-store.interface.js';
 import { createContextLogger } from '../observability/logger.js';
 import type { EmbeddingVector } from '../types/index.js';
+import { queueDepth, queueFileCount, parquetBatchCount } from '../observability/metrics.js';
+import path from 'path';
 
 /**
- * Integration wrapper for the rotating write queue
+ * Integration wrapper for the SQLite embedding queue
  * This provides a clean interface for the API to use
  */
 export class EmbeddingWriteQueueManager {
-  private queue: RotatingEmbeddingWriteQueue;
+  private queue: SqliteEmbeddingQueue;
   private logger = createContextLogger({ service: 'embedding-write-queue-manager' });
+  private metricsInterval: NodeJS.Timeout | null = null;
 
   constructor(
-    dataDir: string,
+    dbPathOrDataDir: string,
     embeddingService: IVectorStore,
     options: {
-      batchSize?: number;
       processIntervalMs?: number;
       maxRetries?: number;
-      maxFilesRetained?: number;
-      maxParallelFiles?: number;
       insertChunkSize?: number;
+      parquetExportThreshold?: number;
+      parquetExportDir?: string;
     } = {}
   ) {
-    this.queue = new RotatingEmbeddingWriteQueue(
-      dataDir,
+    // If path doesn't end with .db, assume it's a data directory and append the db file name
+    const dbPath = dbPathOrDataDir.endsWith('.db') 
+      ? dbPathOrDataDir 
+      : path.join(dbPathOrDataDir, 'embedding-queue.db');
+    
+    this.queue = new SqliteEmbeddingQueue(
+      dbPath,
       embeddingService,
-      options.batchSize || 500,
+      options.parquetExportThreshold || 50_000,
+      options.parquetExportDir,
       options.processIntervalMs || 1000,
-      options.maxRetries || 3,
-      options.maxFilesRetained || 50,
-      options.maxParallelFiles || 5,
-      options.insertChunkSize || 1000
+      options.insertChunkSize || 1000,
+      options.maxRetries || 3
     );
   }
 
   async initialize(): Promise<void> {
     await this.queue.initialize();
+    
+    // Set up periodic metrics refresh (every 30 seconds)
+    this.metricsInterval = setInterval(async () => {
+      await this.updateQueueMetrics();
+    }, 30000);
+    
+    // Initial metrics update
+    await this.updateQueueMetrics();
+    
     this.logger.info('Embedding write queue manager initialized');
   }
 
@@ -46,6 +61,9 @@ export class EmbeddingWriteQueueManager {
    */
   async queueEmbeddings(embeddings: EmbeddingVector[], correlationId?: string): Promise<void> {
     await this.queue.enqueue(embeddings, correlationId);
+    
+    // Update metrics after enqueueing
+    await this.updateQueueMetrics();
   }
 
   /**
@@ -53,64 +71,64 @@ export class EmbeddingWriteQueueManager {
    */
   async getStats(): Promise<{
     queue: {
-      pendingFiles: number;
-      processingFiles: number;
-      completedFiles: number;
-      failedFiles: number;
-      isProcessing: boolean;
-      totalPendingItems: number;
-      completedDirectory: string;
+      pending: number;
+      processing: number;
+      failed: number;
+      completed: number;
+      exported: number;
     };
-    completed: {
-      totalFiles: number;
-      totalItems: number;
-      totalSizeBytes: number;
-      totalSizeMB: number;
-      oldestFile?: string;
-      newestFile?: string;
-    };
-    failed: {
-      totalItems: number;
+    parquet: {
+      totalBatches: number;
+      nextExportAt: number;
     };
   }> {
-    const [queueStats, completedSummary, failedCount] = await Promise.all([
-      this.queue.getQueueStats(),
-      this.queue.getCompletedFilesSummary(),
-      this.queue.getFailedItemsCount()
-    ]);
+    const stats = this.queue.getStats();
+
+    // Update metrics when stats are requested
+    await this.updateQueueMetrics();
 
     return {
-      queue: queueStats,
-      completed: {
-        ...completedSummary,
-        totalSizeMB: Math.round(completedSummary.totalSizeBytes / (1024 * 1024) * 100) / 100
+      queue: {
+        pending: stats.pending,
+        processing: stats.processing,
+        failed: stats.failed,
+        completed: stats.completed,
+        exported: stats.exported
       },
-      failed: {
-        totalItems: failedCount
+      parquet: {
+        totalBatches: stats.parquetBatches,
+        nextExportAt: stats.nextExportAt
       }
     };
   }
 
   /**
-   * Get detailed information about completed files
+   * Get detailed information about Parquet export batches
    */
-  async getCompletedFilesInfo() {
-    return await this.queue.getCompletedFilesInfo();
+  async getParquetBatches() {
+    return await this.queue.getParquetBatches();
   }
 
   /**
    * Retry all failed items
    */
   async retryFailedItems(): Promise<void> {
-    await this.queue.retryFailedFiles();
-    this.logger.info('Initiated retry of all failed items');
+    const retriedCount = await this.queue.retryFailed();
+    this.logger.info({ retriedCount }, 'Initiated retry of all failed items');
   }
 
   /**
    * Graceful shutdown - waits for current processing to complete
    */
   async shutdown(): Promise<void> {
+    // Clear metrics interval
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval);
+      this.metricsInterval = null;
+    }
+    
     await this.queue.shutdown();
+    this.queue.close();
     this.logger.info('Embedding write queue manager shutdown complete');
   }
 
@@ -125,23 +143,49 @@ export class EmbeddingWriteQueueManager {
     const issues: string[] = [];
 
     // Check for excessive failed items
-    if (stats.failed.totalItems > 1000) {
-      issues.push(`High number of failed items: ${stats.failed.totalItems}`);
+    if (stats.queue.failed > 1000) {
+      issues.push(`High number of failed items: ${stats.queue.failed}`);
     }
 
     // Check for excessive pending items (might indicate processing issues)
-    if (stats.queue.totalPendingItems > 10000) {
-      issues.push(`High number of pending items: ${stats.queue.totalPendingItems}`);
+    if (stats.queue.pending > 10000) {
+      issues.push(`High number of pending items: ${stats.queue.pending}`);
     }
 
-    // Check if processing is stuck (many processing files)
-    if (stats.queue.processingFiles > 5) {
-      issues.push(`Many files in processing state: ${stats.queue.processingFiles}`);
+    // Check if processing is stuck (many processing items)
+    if (stats.queue.processing > 100) {
+      issues.push(`Many items in processing state: ${stats.queue.processing}`);
     }
 
     return {
       healthy: issues.length === 0,
       issues
     };
+  }
+
+  /**
+   * Update queue metrics proactively
+   * This ensures metrics are always up to date
+   */
+  private async updateQueueMetrics(): Promise<void> {
+    try {
+      const stats = this.queue.getStats();
+      
+      // Update queue depth (total pending items)
+      queueDepth.set(stats.pending);
+      
+      // Update item counts by status
+      queueFileCount.set({ status: 'pending' }, stats.pending);
+      queueFileCount.set({ status: 'processing' }, stats.processing);
+      queueFileCount.set({ status: 'failed' }, stats.failed);
+      queueFileCount.set({ status: 'completed' }, stats.completed);
+      queueFileCount.set({ status: 'exported' }, stats.exported);
+      
+      // Update Parquet batch count
+      parquetBatchCount.set(stats.parquetBatches);
+    } catch (error) {
+      // Log but don't throw - metrics update failures shouldn't break operations
+      this.logger.debug({ error }, 'Failed to update queue metrics');
+    }
   }
 }

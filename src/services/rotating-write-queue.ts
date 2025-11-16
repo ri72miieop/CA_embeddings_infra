@@ -1,9 +1,27 @@
+/**
+ * @deprecated This file-based queue implementation has been replaced by SqliteEmbeddingQueue.
+ * 
+ * Migration completed on 2025-11-16. This file is kept temporarily for reference.
+ * 
+ * Key improvements in the new SQLite-based implementation:
+ * - ACID transactions eliminate manifest drift issues
+ * - Instant statistics via SQL queries (no file scanning)
+ * - Fine-grained retry logic (per-embedding, not per-file)
+ * - Automatic Parquet export at configurable thresholds
+ * - Better observability and monitoring
+ * 
+ * This file will be removed in a future release after successful migration verification.
+ * 
+ * See: src/services/sqlite-embedding-queue.ts
+ */
+
 import fs from 'fs/promises';
 import path from 'path';
 import { createContextLogger } from '../observability/logger.js';
 import type { EmbeddingVector } from '../types/index.js';
 import { ByteWriter, parquetWrite, type BasicType } from 'hyparquet-writer';
 import { parquetRead, parquetMetadata } from 'hyparquet';
+import { queueProcessingRate, queueRetryCount } from '../observability/metrics.js';
 
 interface QueuedEmbedding {
   id: string;
@@ -339,6 +357,9 @@ export class RotatingEmbeddingWriteQueue {
             
             processed++;
             
+            // Record successful processing metric
+            queueProcessingRate.inc({ status: 'success' }, item.embeddings.length);
+            
             this.logger.debug({
               queueItemId: item.id,
               embeddingCount: item.embeddings.length,
@@ -347,8 +368,16 @@ export class RotatingEmbeddingWriteQueue {
             
           } catch (error) {
             item.retryCount++;
+            
+            // Record failure metric
+            queueProcessingRate.inc({ status: 'failure' }, item.embeddings.length);
+            
             if (item.retryCount <= this.maxRetries) {
               failed.push(item);
+              
+              // Record retry metric
+              queueRetryCount.inc();
+              
               this.logger.warn({
                 queueItemId: item.id,
                 retryCount: item.retryCount,

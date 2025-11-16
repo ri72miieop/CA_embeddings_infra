@@ -75,9 +75,12 @@ export interface EmbeddingGenerationConfig {
   };
   provider: EmbeddingProviderConfig;
   queue?: {
-    maxParallelFiles?: number;
-    insertChunkSize?: number;
-    maxFilesRetained?: number;
+    maxParallelFiles?: number;      // Keep for batch processing (deprecated for SQLite queue)
+    insertChunkSize?: number;        // Chunk size for vector store inserts
+    maxFilesRetained?: number;       // Deprecated for SQLite queue
+    parquetExportThreshold?: number; // New: records per Parquet file
+    sqliteDbPath?: string;           // New: SQLite database path
+    parquetExportDir?: string;       // New: Parquet export directory
   };
 }
 
