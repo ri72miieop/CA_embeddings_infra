@@ -144,6 +144,8 @@ Content-Type: application/json
 
 **Note**: Advanced metadata filtering is fully supported with Qdrant.
 
+**For detailed search API documentation with advanced filtering examples, see [docs/SEARCH_API.md](docs/SEARCH_API.md).**
+
 ### Delete Embeddings
 ```bash
 DELETE /embeddings
@@ -314,4 +316,6 @@ The service provides multiple health check endpoints:
 
 - **Issues**: Create GitHub issues for bugs
 - **Discussions**: Use GitHub discussions for questions
-- **Documentation**: Check `/docs` for detailed guides
+- **Documentation**:
+  - [Search API Guide](docs/SEARCH_API.md) - Complete guide for search endpoint with advanced filtering
+  - Check `/docs` for additional detailed guides
