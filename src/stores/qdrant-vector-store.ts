@@ -334,24 +334,87 @@ export class QdrantVectorStore implements IVectorStore {
   }
 
   /**
+   * Parse numeric range expression from string
+   * Supports: ">10", "<50", ">=10", "<=50", ">10 & <50", ">=10 & <=50"
+   */
+  private parseNumericRange(value: string): { range?: any; isRange: boolean } {
+    // Try to parse range expression
+    const rangePattern = /^\s*(>=?|<=?)\s*(-?\d+(?:\.\d+)?)\s*(?:&\s*(>=?|<=?)\s*(-?\d+(?:\.\d+)?))?\s*$/;
+    const match = value.match(rangePattern);
+
+    if (!match) {
+      return { isRange: false };
+    }
+
+    const op1 = match[1];
+    const val1 = match[2];
+    const op2 = match[3];
+    const val2 = match[4];
+    const range: any = {};
+
+    // Parse first operator (always present if regex matched)
+    if (op1 && val1) {
+      const numVal = parseFloat(val1);
+      if (op1 === '>') {
+        range.gt = numVal;
+      } else if (op1 === '>=') {
+        range.gte = numVal;
+      } else if (op1 === '<') {
+        range.lt = numVal;
+      } else if (op1 === '<=') {
+        range.lte = numVal;
+      }
+    }
+
+    // Parse second operator if exists (for range expressions like ">10 & <50")
+    if (op2 && val2) {
+      const numVal = parseFloat(val2);
+      if (op2 === '>') {
+        range.gt = numVal;
+      } else if (op2 === '>=') {
+        range.gte = numVal;
+      } else if (op2 === '<') {
+        range.lt = numVal;
+      } else if (op2 === '<=') {
+        range.lte = numVal;
+      }
+    }
+
+    return { range, isRange: true };
+  }
+
+  /**
    * Build Qdrant filter from simple key-value metadata
    * Supports:
    * - Exact matching for non-string values (numbers, booleans)
    * - Substring matching for string values using full-text search
+   * - Range queries for numeric fields (">10", "<50", ">10 & <50")
    */
   private buildQdrantFilter(metadata: Record<string, any>): any {
     const must = Object.entries(metadata).map(([key, value]) => {
       // Prefix with 'metadata.' to match the payload structure
       const filterKey = `metadata.${key}`;
 
-      // Use text matching for strings (enables substring matching)
-      // Use value matching for other types (exact matching)
+      // Handle string values
       if (typeof value === 'string') {
-        return {
-          key: filterKey,
-          match: { text: value },
-        };
+        // Check if it's a numeric range expression
+        const { range, isRange } = this.parseNumericRange(value);
+
+        if (isRange) {
+          // Use range filter for numeric ranges
+          return {
+            key: filterKey,
+            range,
+          };
+        } else {
+          // Use text matching for regular strings (enables substring matching)
+          return {
+            key: filterKey,
+            match: { text: value },
+          };
+        }
       } else {
+        // Use value matching for other types (exact matching)
         return {
           key: filterKey,
           match: { value },
