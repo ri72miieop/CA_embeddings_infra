@@ -58,7 +58,7 @@ export class QdrantVectorStore implements IVectorStore {
 
       if (!collectionExists) {
         contextLogger.info('Collection does not exist, creating new collection');
-        
+
         // Create collection with proper vector configuration
         await this.client.createCollection(this.collectionName, {
           vectors: {
@@ -74,20 +74,23 @@ export class QdrantVectorStore implements IVectorStore {
         contextLogger.info('Created new Qdrant collection');
       } else {
         contextLogger.info('Using existing Qdrant collection');
-        
+
         // Verify collection configuration
         const collectionInfo = await this.client.getCollection(this.collectionName);
         const vectorsConfig = collectionInfo.config?.params?.vectors;
-        const vectorSize = typeof vectorsConfig === 'object' && 'size' in vectorsConfig 
-          ? vectorsConfig.size 
+        const vectorSize = typeof vectorsConfig === 'object' && 'size' in vectorsConfig
+          ? vectorsConfig.size
           : 0;
-        
+
         if (vectorSize !== this.config.dimension) {
           throw new Error(
             `Collection dimension mismatch: expected ${this.config.dimension}, got ${vectorSize}`
           );
         }
       }
+
+      // Ensure payload indexes exist for text fields (works for both new and existing collections)
+      await this.ensurePayloadIndexes(contextLogger);
 
       this.isInitialized = true;
       contextLogger.info('Qdrant client initialized successfully');
@@ -282,14 +285,79 @@ export class QdrantVectorStore implements IVectorStore {
   }
 
   /**
+   * Ensure payload indexes exist for common fields
+   * Checks if indexes already exist before creating them
+   */
+  private async ensurePayloadIndexes(contextLogger: any): Promise<void> {
+    try {
+      // Get existing collection info to check for existing indexes
+      const collectionInfo = await this.client!.getCollection(this.collectionName);
+      const existingIndexes = collectionInfo.payload_schema || {};
+
+      // Define indexes to create
+      const textIndexes = [
+        { field: 'metadata.text', schema: 'text' },
+        { field: 'metadata.original_text', schema: 'text' },
+      ];
+
+      const keywordIndexes = [
+        { field: 'metadata.source', schema: 'keyword' },
+        { field: 'metadata.provider', schema: 'keyword' },
+        { field: 'metadata.model', schema: 'keyword' },
+      ];
+
+      const allIndexes = [...textIndexes, ...keywordIndexes];
+
+      // Create missing indexes
+      for (const { field, schema } of allIndexes) {
+        // Check if index already exists
+        if (existingIndexes[field]) {
+          contextLogger.debug(`Payload index for ${field} already exists`);
+          continue;
+        }
+
+        try {
+          await this.client!.createPayloadIndex(this.collectionName, {
+            field_name: field,
+            field_schema: schema as any,
+          });
+          contextLogger.info(`Created payload index for ${field}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          contextLogger.warn(`Failed to create ${field} field index: ${errorMessage}`);
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      contextLogger.warn(`Failed to ensure payload indexes: ${errorMessage}`);
+    }
+  }
+
+  /**
    * Build Qdrant filter from simple key-value metadata
-   * Supports basic equality filtering
+   * Supports:
+   * - Exact matching for non-string values (numbers, booleans)
+   * - Substring matching for string values using full-text search
    */
   private buildQdrantFilter(metadata: Record<string, any>): any {
-    const must = Object.entries(metadata).map(([key, value]) => ({
-      key,
-      match: { value },
-    }));
+    const must = Object.entries(metadata).map(([key, value]) => {
+      // Prefix with 'metadata.' to match the payload structure
+      const filterKey = `metadata.${key}`;
+
+      // Use text matching for strings (enables substring matching)
+      // Use value matching for other types (exact matching)
+      if (typeof value === 'string') {
+        return {
+          key: filterKey,
+          match: { text: value },
+        };
+      } else {
+        return {
+          key: filterKey,
+          match: { value },
+        };
+      }
+    });
 
     return {
       must,
