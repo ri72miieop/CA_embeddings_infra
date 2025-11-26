@@ -1,9 +1,19 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { trace, SpanStatusCode } from '@opentelemetry/api';
-import type { EmbeddingVector, SearchResult, SearchQuery, DatabaseConfig } from '../types/index.js';
+import type { 
+  EmbeddingVector, 
+  SearchResult, 
+  SearchQuery, 
+  DatabaseConfig,
+  Filter,
+  FilterItem,
+  FieldCondition,
+  RangeCondition
+} from '../types/index.js';
 import { createContextLogger } from '../observability/logger.js';
 import { embeddingOperationDuration, errorRate } from '../observability/metrics.js';
 import type { IVectorStore } from '../interfaces/vector-store.interface.js';
+import { cleanTweetText } from '../utils/tweet-text-processor.js';
 
 const tracer = trace.getTracer('qdrant-vector-store');
 
@@ -218,7 +228,7 @@ export class QdrantVectorStore implements IVectorStore {
     try {
       contextLogger.debug('Starting vector search');
 
-      // Build Qdrant filter if provided
+      // Build Qdrant filter if provided (supports both new and legacy formats)
       const filter = query.filter ? this.buildQdrantFilter(query.filter) : undefined;
 
       if (filter) {
@@ -333,8 +343,192 @@ export class QdrantVectorStore implements IVectorStore {
     }
   }
 
+  // ============================================================================
+  // Filter Building Methods (Qdrant-style with must/should/must_not)
+  // ============================================================================
+
   /**
-   * Parse numeric range expression from string
+   * Parse datetime value from ISO 8601 string or Unix timestamp
+   * Returns Unix timestamp in seconds for Qdrant datetime range queries
+   */
+  private parseDatetimeValue(value: string | number): number {
+    if (typeof value === 'number') {
+      // If value is already a number, assume it's a Unix timestamp
+      // If it looks like milliseconds (> year 2100 in seconds), convert to seconds
+      if (value > 4102444800) {
+        return Math.floor(value / 1000);
+      }
+      return value;
+    }
+
+    // Try to parse as ISO 8601 datetime string
+    const date = new Date(value);
+    if (!isNaN(date.getTime())) {
+      return Math.floor(date.getTime() / 1000);
+    }
+
+    // If not a valid datetime, try parsing as a number string
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue)) {
+      if (numValue > 4102444800) {
+        return Math.floor(numValue / 1000);
+      }
+      return numValue;
+    }
+
+    throw new Error(`Invalid datetime value: ${value}`);
+  }
+
+  /**
+   * Check if a value looks like a datetime (ISO 8601 string or large timestamp)
+   */
+  private isDatetimeValue(value: string | number): boolean {
+    if (typeof value === 'string') {
+      // Check for ISO 8601 format patterns
+      const isoPattern = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?/;
+      if (isoPattern.test(value)) {
+        const date = new Date(value);
+        return !isNaN(date.getTime());
+      }
+      return false;
+    }
+    // Large numbers (> year 2000 in seconds) are likely timestamps
+    return value > 946684800;
+  }
+
+  /**
+   * Build a range condition for Qdrant
+   * Handles both numeric and datetime values
+   */
+  private buildRangeCondition(range: RangeCondition): any {
+    const qdrantRange: any = {};
+
+    // Check if any value looks like a datetime
+    const values = [range.gt, range.gte, range.lt, range.lte].filter(v => v !== undefined);
+    const isDatetime = values.some(v => this.isDatetimeValue(v!));
+
+    if (range.gt !== undefined) {
+      qdrantRange.gt = isDatetime ? this.parseDatetimeValue(range.gt) : 
+        (typeof range.gt === 'string' ? parseFloat(range.gt) : range.gt);
+    }
+    if (range.gte !== undefined) {
+      qdrantRange.gte = isDatetime ? this.parseDatetimeValue(range.gte) : 
+        (typeof range.gte === 'string' ? parseFloat(range.gte) : range.gte);
+    }
+    if (range.lt !== undefined) {
+      qdrantRange.lt = isDatetime ? this.parseDatetimeValue(range.lt) : 
+        (typeof range.lt === 'string' ? parseFloat(range.lt) : range.lt);
+    }
+    if (range.lte !== undefined) {
+      qdrantRange.lte = isDatetime ? this.parseDatetimeValue(range.lte) : 
+        (typeof range.lte === 'string' ? parseFloat(range.lte) : range.lte);
+    }
+
+    return qdrantRange;
+  }
+
+  /**
+   * Check if an object is a FieldCondition (has 'key' property)
+   */
+  private isFieldCondition(item: FilterItem): item is FieldCondition {
+    return 'key' in item;
+  }
+
+  /**
+   * Build a single Qdrant condition from a FieldCondition
+   */
+  private buildCondition(condition: FieldCondition): any {
+    // Prefix with 'metadata.' to match the payload structure
+    const filterKey = `metadata.${condition.key}`;
+
+    if (condition.match) {
+      if (condition.match.text !== undefined) {
+        // Full-text substring matching
+        // Apply the same text cleaning as used when storing tweets
+        // This ensures filters match against the processed/cleaned text
+        const cleanedText = cleanTweetText(condition.match.text);
+        return {
+          key: filterKey,
+          match: { text: cleanedText },
+        };
+      } else if (condition.match.value !== undefined) {
+        // Exact value matching
+        return {
+          key: filterKey,
+          match: { value: condition.match.value },
+        };
+      }
+    }
+
+    if (condition.range) {
+      return {
+        key: filterKey,
+        range: this.buildRangeCondition(condition.range),
+      };
+    }
+
+    throw new Error(`Invalid condition: must have either 'match' or 'range'`);
+  }
+
+  /**
+   * Build Qdrant filter from Filter object with must/should/must_not clauses
+   * Supports recursive nesting of filter clauses
+   */
+  private buildFilter(filter: Filter): any {
+    const qdrantFilter: any = {};
+
+    if (filter.must && filter.must.length > 0) {
+      qdrantFilter.must = filter.must.map(item => {
+        if (this.isFieldCondition(item)) {
+          return this.buildCondition(item);
+        } else {
+          // Nested filter clause
+          return this.buildFilter(item as Filter);
+        }
+      });
+    }
+
+    if (filter.should && filter.should.length > 0) {
+      qdrantFilter.should = filter.should.map(item => {
+        if (this.isFieldCondition(item)) {
+          return this.buildCondition(item);
+        } else {
+          // Nested filter clause
+          return this.buildFilter(item as Filter);
+        }
+      });
+    }
+
+    if (filter.must_not && filter.must_not.length > 0) {
+      qdrantFilter.must_not = filter.must_not.map(item => {
+        if (this.isFieldCondition(item)) {
+          return this.buildCondition(item);
+        } else {
+          // Nested filter clause
+          return this.buildFilter(item as Filter);
+        }
+      });
+    }
+
+    return qdrantFilter;
+  }
+
+  // ============================================================================
+  // Legacy Filter Support (Backward Compatibility)
+  // ============================================================================
+
+  /**
+   * Check if a filter object is using the new clause-based format
+   */
+  private isClauseBasedFilter(filter: any): boolean {
+    if (!filter || typeof filter !== 'object') return false;
+    const keys = Object.keys(filter);
+    // New format has must, should, or must_not at top level
+    return keys.some(key => ['must', 'should', 'must_not'].includes(key));
+  }
+
+  /**
+   * Parse numeric range expression from string (legacy format)
    * Supports: ">10", "<50", ">=10", "<=50", ">10 & <50", ">=10 & <=50"
    */
   private parseNumericRange(value: string): { range?: any; isRange: boolean } {
@@ -384,13 +578,13 @@ export class QdrantVectorStore implements IVectorStore {
   }
 
   /**
-   * Build Qdrant filter from simple key-value metadata
+   * Build Qdrant filter from legacy flat key-value metadata format
    * Supports:
    * - Exact matching for non-string values (numbers, booleans)
    * - Substring matching for string values using full-text search
    * - Range queries for numeric fields (">10", "<50", ">10 & <50")
    */
-  private buildQdrantFilter(metadata: Record<string, any>): any {
+  private buildLegacyFilter(metadata: Record<string, any>): any {
     const must = Object.entries(metadata).map(([key, value]) => {
       // Prefix with 'metadata.' to match the payload structure
       const filterKey = `metadata.${key}`;
@@ -408,9 +602,12 @@ export class QdrantVectorStore implements IVectorStore {
           };
         } else {
           // Use text matching for regular strings (enables substring matching)
+          // Apply the same text cleaning as used when storing tweets
+          // This ensures filters match against the processed/cleaned text
+          const cleanedText = cleanTweetText(value);
           return {
             key: filterKey,
-            match: { text: value },
+            match: { text: cleanedText },
           };
         }
       } else {
@@ -425,6 +622,20 @@ export class QdrantVectorStore implements IVectorStore {
     return {
       must,
     };
+  }
+
+  /**
+   * Build Qdrant filter from either new clause-based or legacy flat format
+   * Automatically detects the format and routes to the appropriate handler
+   */
+  private buildQdrantFilter(filter: any): any {
+    if (this.isClauseBasedFilter(filter)) {
+      // New clause-based format (must/should/must_not)
+      return this.buildFilter(filter as Filter);
+    } else {
+      // Legacy flat format (key-value pairs)
+      return this.buildLegacyFilter(filter);
+    }
   }
 
   /**

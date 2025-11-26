@@ -10,11 +10,88 @@ export interface SearchResult {
   metadata?: Record<string, any>;
 }
 
+// ============================================================================
+// Filter Types for Advanced Search (Qdrant-style)
+// ============================================================================
+
+/**
+ * Match condition for exact value or text matching
+ */
+export interface MatchCondition {
+  /** Exact value match (for strings, numbers, booleans) */
+  value?: string | number | boolean;
+  /** Full-text substring match (for text fields) */
+  text?: string;
+}
+
+/**
+ * Range condition for numeric and datetime filtering
+ * Supports: gt (>), gte (>=), lt (<), lte (<=)
+ * Datetime values can be ISO 8601 strings or Unix timestamps (milliseconds)
+ */
+export interface RangeCondition {
+  /** Greater than */
+  gt?: number | string;
+  /** Greater than or equal */
+  gte?: number | string;
+  /** Less than */
+  lt?: number | string;
+  /** Less than or equal */
+  lte?: number | string;
+}
+
+/**
+ * A single filter condition targeting a metadata field
+ */
+export interface FieldCondition {
+  /** The metadata field key to filter on (e.g., "tokens", "provider", "created_at") */
+  key: string;
+  /** Match condition for exact or text matching */
+  match?: MatchCondition;
+  /** Range condition for numeric or datetime filtering */
+  range?: RangeCondition;
+}
+
+/**
+ * Filter clause supporting AND (must), OR (should), and NOT (must_not) logic
+ * Supports recursive nesting for complex queries
+ */
+export interface Filter {
+  /** AND logic - all conditions must match */
+  must?: FilterItem[];
+  /** OR logic - at least one condition must match */
+  should?: FilterItem[];
+  /** NOT logic - none of the conditions must match */
+  must_not?: FilterItem[];
+}
+
+/**
+ * A filter item can be either a field condition or a nested filter clause
+ */
+export type FilterItem = FieldCondition | Filter;
+
+/**
+ * Legacy flat filter format for backward compatibility
+ * Keys are metadata field names, values are filter expressions
+ * Examples: { "tokens": ">50", "provider": "deepinfra", "is_truncated": false }
+ */
+export type LegacyFilter = Record<string, any>;
+
+/**
+ * Combined filter type supporting both new clause-based and legacy flat formats
+ */
+export type SearchFilter = Filter | LegacyFilter;
+
+// ============================================================================
+// Search Types
+// ============================================================================
+
 export interface SearchQuery {
   vector: Float32Array;
   k: number;
   threshold?: number;
-  filter?: Record<string, any>; // Metadata filter for advanced search (Qdrant)
+  /** Filter supporting both new clause-based format and legacy flat format */
+  filter?: SearchFilter;
 }
 
 export type VectorStoreType = 'qdrant';

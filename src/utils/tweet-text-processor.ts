@@ -93,8 +93,11 @@ export function processTweetText(
 /**
  * Clean tweet text for embedding
  * Removes URLs, normalizes whitespace, removes mentions at start, etc.
+ * 
+ * This function is also used to normalize filter text in search queries
+ * to ensure consistent matching against stored processed text.
  */
-function cleanTweetText(text: string): string {
+export function cleanTweetText(text: string): string {
   if (!text) return '';
   
   return text

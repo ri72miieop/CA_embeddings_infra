@@ -1,14 +1,18 @@
 # Embeddings Search API Guide
 
-Complete guide for using the `/embeddings/search` endpoint with advanced filtering capabilities.
+Complete guide for using the `/embeddings/search` endpoint with advanced Qdrant-style filtering capabilities.
 
 ## Table of Contents
 - [Endpoint Overview](#endpoint-overview)
 - [Request Structure](#request-structure)
-- [Filter Types](#filter-types)
+- [Filter Structure](#filter-structure)
+- [Condition Types](#condition-types)
+- [Filter Clauses](#filter-clauses)
+- [Datetime Filtering](#datetime-filtering)
 - [Examples by Use Case](#examples-by-use-case)
 - [Response Format](#response-format)
 - [Best Practices](#best-practices)
+- [Filter Formats](#filter-formats)
 
 ---
 
@@ -34,7 +38,7 @@ Complete guide for using the `/embeddings/search` endpoint with advanced filteri
 | `vector` | number[] | Yes* | - | Vector to search with (alternative to `searchTerm`) |
 | `k` | number | No | 10 | Number of results to return (1-1000) |
 | `threshold` | number | No | 0.65 | Similarity threshold (0.0-1.0) |
-| `filter` | object | No | - | Metadata filters (see below) |
+| `filter` | object | No | - | Advanced filter with must/should/must_not clauses |
 
 *Either `searchTerm` OR `vector` must be provided, but not both.
 
@@ -48,115 +52,368 @@ Complete guide for using the `/embeddings/search` endpoint with advanced filteri
 
 ---
 
-## Filter Types
+## Filter Structure
 
-The `filter` object supports multiple filter types that can be combined:
+The `filter` object uses Qdrant-style clauses for powerful filtering capabilities:
 
-### 1. Substring Matching (Text Fields)
+```json
+{
+  "filter": {
+    "must": [...],      // AND - all conditions must match
+    "should": [...],    // OR - at least one condition must match
+    "must_not": [...]   // NOT - none of the conditions must match
+  }
+}
+```
 
-String values automatically enable full-text substring matching.
+### Key Concepts
 
-**How it works:**
-- Matches if the stored text contains the search string
-- Case-insensitive
-- Works on any text field in metadata
+1. **Clauses** (`must`, `should`, `must_not`) contain arrays of conditions
+2. **Conditions** can be either:
+   - **Field conditions** with `key` + `match` or `range`
+   - **Nested filter clauses** for complex logic
+3. Clauses can be combined and recursively nested
 
-**Example:**
+---
+
+## Condition Types
+
+### 1. Match Conditions
+
+For exact value or text matching.
+
+#### Exact Value Match
+
+Use `match.value` for exact matching on strings, numbers, or booleans:
+
+```json
+{
+  "filter": {
+    "must": [
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "has_quotes", "match": { "value": true } },
+      { "key": "tokens", "match": { "value": 50 } }
+    ]
+  }
+}
+```
+
+#### Text Substring Match
+
+Use `match.text` for full-text substring matching (case-insensitive):
+
+```json
+{
+  "filter": {
+    "must": [
+      { "key": "text", "match": { "text": "neural network" } }
+    ]
+  }
+}
+```
+
+This matches any embedding where `metadata.text` contains "neural network" as a substring.
+
+> **Note: Automatic Text Cleaning**  
+> Filter text values are automatically cleaned using the same transformation applied to tweets before embedding. This includes:
+> - Removing URLs (`https://...`)
+> - Normalizing whitespace
+> - Removing leading @mentions (only at the start of text)
+> - Normalizing unicode quotes
+>
+> This ensures your filter text matches against the stored processed text. For example:
+> - `"check this https://t.co/abc"` → `"check this"`
+> - `"@user @other hello world"` → `"hello world"`
+> - `"hello @user world"` → `"hello @user world"` (mention kept, not at start)
+
+---
+
+### 2. Range Conditions
+
+For numeric comparisons using `range` with operators:
+
+| Operator | Description |
+|----------|-------------|
+| `gt` | Greater than |
+| `gte` | Greater than or equal |
+| `lt` | Less than |
+| `lte` | Less than or equal |
+
+#### Single Bound
+
+```json
+{
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "gt": 50 } }
+    ]
+  }
+}
+```
+
+#### Range (Between)
+
+```json
+{
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "gte": 20, "lte": 100 } }
+    ]
+  }
+}
+```
+
+---
+
+## Filter Clauses
+
+### Must (AND Logic)
+
+All conditions must match. Use for required criteria:
+
+```json
+{
+  "searchTerm": "machine learning",
+  "filter": {
+    "must": [
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "tokens", "range": { "gte": 50 } },
+      { "key": "is_truncated", "match": { "value": false } }
+    ]
+  }
+}
+```
+
+### Should (OR Logic)
+
+At least one condition must match. Use for alternatives:
+
+```json
+{
+  "searchTerm": "embeddings",
+  "filter": {
+    "should": [
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "provider", "match": { "value": "openai" } },
+      { "key": "provider", "match": { "value": "local" } }
+    ]
+  }
+}
+```
+
+### Must Not (NOT Logic)
+
+None of the conditions must match. Use for exclusions:
+
+```json
+{
+  "searchTerm": "technical content",
+  "filter": {
+    "must_not": [
+      { "key": "is_truncated", "match": { "value": true } },
+      { "key": "has_quotes", "match": { "value": true } }
+    ]
+  }
+}
+```
+
+### Combining Clauses
+
+Combine multiple clauses in a single filter:
+
+```json
+{
+  "searchTerm": "optimization",
+  "filter": {
+    "must": [
+      { "key": "source", "match": { "value": "parquet_import" } },
+      { "key": "tokens", "range": { "gte": 50, "lte": 200 } }
+    ],
+    "should": [
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "provider", "match": { "value": "openai" } }
+    ],
+    "must_not": [
+      { "key": "is_truncated", "match": { "value": true } }
+    ]
+  }
+}
+```
+
+### Nested Clauses
+
+Create complex logic by nesting clauses within clauses:
+
+```json
+{
+  "searchTerm": "data science",
+  "filter": {
+    "must": [
+      { "key": "source", "match": { "value": "parquet_import" } }
+    ],
+    "should": [
+      {
+        "must": [
+          { "key": "provider", "match": { "value": "deepinfra" } },
+          { "key": "tokens", "range": { "gt": 50 } }
+        ]
+      },
+      {
+        "must": [
+          { "key": "provider", "match": { "value": "openai" } },
+          { "key": "tokens", "range": { "gt": 100 } }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This matches: source is "parquet_import" AND (deepinfra with >50 tokens OR openai with >100 tokens).
+
+---
+
+## Datetime Filtering
+
+Range conditions support datetime values in two formats:
+
+### ISO 8601 Strings
+
+```json
+{
+  "filter": {
+    "must": [
+      {
+        "key": "created_at",
+        "range": {
+          "gte": "2024-01-01T00:00:00Z",
+          "lt": "2024-12-31T23:59:59Z"
+        }
+      }
+    ]
+  }
+}
+```
+
+### Unix Timestamps (Milliseconds)
+
+```json
+{
+  "filter": {
+    "must": [
+      {
+        "key": "timestamp",
+        "range": {
+          "gte": 1704067200000,
+          "lt": 1735689599000
+        }
+      }
+    ]
+  }
+}
+```
+
+### Mixed Formats
+
+You can mix formats in the same range:
+
+```json
+{
+  "filter": {
+    "must": [
+      {
+        "key": "created_at",
+        "range": {
+          "gte": "2024-01-01T00:00:00Z",
+          "lt": 1735689599000
+        }
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Examples by Use Case
+
+> **Note:** Examples show both legacy flat format and new clause-based format where applicable. Both formats are fully supported.
+
+### Use Case 1: Basic Text Search
+
+Find embeddings semantically similar to a query.
+
+```json
+{
+  "searchTerm": "artificial intelligence",
+  "k": 5
+}
+```
+
+### Use Case 2: Text Search with Substring Filter
+
+Find embeddings similar to "machine learning" that contain "neural" in their text.
+
+**Legacy format:**
+```json
+{
+  "searchTerm": "machine learning",
+  "k": 10,
+  "filter": {
+    "text": "neural"
+  }
+}
+```
+
+**New format:**
+```json
+{
+  "searchTerm": "machine learning",
+  "k": 10,
+  "filter": {
+    "must": [
+      { "key": "text", "match": { "text": "neural" } }
+    ]
+  }
+}
+```
+
+### Use Case 3: TPOT-style Substring Search
+
+Find embeddings semantically similar to a phrase that also contain specific text.
+
 ```json
 {
   "searchTerm": "you can just do stuff",
   "threshold": 0.5,
-  "filter":{
-    "text":"tpot"
+  "filter": {
+    "must": [
+      { "key": "text", "match": { "text": "tpot" } }
+    ]
   }
 }
 ```
 
-This will match any embedding where `metadata.text` contains "tpot" as a substring.
+### Use Case 4: Filter by Exact Text Match
 
----
+Find embeddings with specific text content using substring matching.
 
-### 2. Exact Matching (Non-Text Fields)
-
-Non-string values (numbers, booleans) use exact matching.
-
-**Example:**
 ```json
 {
-  "searchTerm": "yes",
+  "searchTerm": "lifeless",
   "filter": {
-    "has_quotes": true,
-    "has_context":false
+    "must": [
+      { "key": "text", "match": { "text": "the end comes, this lifeless singsong of futility" } }
+    ]
   }
 }
 ```
 
----
+### Use Case 5: Filter by Provider and Model
 
-### 3. Numeric Range Queries
+Find embeddings from a specific provider and model combination.
 
-Use string expressions to filter numeric fields by ranges.
-
-#### Supported Operators
-
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `>` | Greater than | `">10"` |
-| `>=` | Greater than or equal | `">=10"` |
-| `<` | Less than | `"<50"` |
-| `<=` | Less than or equal | `"<=50"` |
-| `>X & <Y` | Between X and Y | `">10 & <50"` |
-| `>=X & <=Y` | Between X and Y (inclusive) | `">=10 & <=50"` |
-
-#### Range Query Examples
-
-**Greater than:**
-```json
-{
-  "searchTerm": "long",
-  "filter": {
-    "tokens": ">30"
-  }
-}
-```
-
-**Less than:**
-```json
-{
-  "searchTerm": "short messages",
-  "filter": {
-    "tokens": "<20"
-  }
-}
-```
-
-**Between (exclusive):**
-```json
-{
-  "searchTerm": "medium posts",
-  "filter": {
-    "tokens": ">10 & <50"
-  }
-}
-```
-
-**Between (inclusive):**
-```json
-{
-  "searchTerm": "specific range",
-  "filter": {
-    "tokens": ">=20 & <=100"
-  }
-}
-```
-
----
-
-### 4. Keyword Matching (Categorical Fields)
-
-String fields like `provider`, `model`, `source` use exact matching.
-
-**Example:**
+**Legacy format:**
 ```json
 {
   "searchTerm": "embeddings",
@@ -168,52 +425,25 @@ String fields like `provider`, `model`, `source` use exact matching.
 }
 ```
 
----
-
-## Examples by Use Case
-
-### Use Case 1: Basic Text Search
-
-Find embeddings containing specific text.
-
+**New format:**
 ```json
 {
-  "searchTerm": "artificial intelligence",
-  "k": 5
-}
-```
-
-### Use Case 2: Text Search with Substring Filter
-
-Find embeddings semantically similar to "machine learning" that contain "neural" in their text.
-
-```json
-{
-  "searchTerm": "machine learning",
-  "k": 10,
+  "searchTerm": "embeddings",
   "filter": {
-    "text": "neural"
+    "must": [
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "model", "match": { "value": "Qwen/Qwen3-Embedding-4B" } },
+      { "key": "source", "match": { "value": "parquet_import" } }
+    ]
   }
 }
 ```
 
-### Use Case 3: Filter by Exact Text Match
-
-Find embeddings with exact text content.
-
-```json
-{
-  "searchTerm": "lifeless",
-  "filter": {
-    "text": "the end comes, this lifeless singsong of futility, squawking furiously at water's edge for chips from sucker passersby. don't feed the beast"
-  }
-}
-```
-
-### Use Case 4: Filter by Token Count Range
+### Use Case 6: Token Count Range
 
 Find embeddings with token count between 20 and 100.
 
+**Legacy format:**
 ```json
 {
   "searchTerm": "data analysis",
@@ -224,8 +454,24 @@ Find embeddings with token count between 20 and 100.
 }
 ```
 
-### Use Case 5: Find Long Documents from Specific Provider
+**New format:**
+```json
+{
+  "searchTerm": "data analysis",
+  "k": 20,
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "gte": 20, "lte": 100 } }
+    ]
+  }
+}
+```
 
+### Use Case 7: Find Long Documents from Specific Provider
+
+Find longer content (>50 tokens) from a specific provider.
+
+**Legacy format:**
 ```json
 {
   "searchTerm": "guide",
@@ -238,8 +484,26 @@ Find embeddings with token count between 20 and 100.
 }
 ```
 
-### Use Case 6: Find Short, Untruncated Messages
+**New format:**
+```json
+{
+  "searchTerm": "guide",
+  "k": 15,
+  "threshold": 0.50,
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "gt": 50 } },
+      { "key": "provider", "match": { "value": "deepinfra" } }
+    ]
+  }
+}
+```
 
+### Use Case 8: Find Short, Untruncated Messages
+
+Find short messages that haven't been truncated and don't contain quotes.
+
+**Legacy format:**
 ```json
 {
   "searchTerm": "quick update",
@@ -251,9 +515,91 @@ Find embeddings with token count between 20 and 100.
 }
 ```
 
-### Use Case 7: Complex Multi-Filter Query
+**New format:**
+```json
+{
+  "searchTerm": "quick update",
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "lt": 30 } },
+      { "key": "is_truncated", "match": { "value": false } },
+      { "key": "has_quotes", "match": { "value": false } }
+    ]
+  }
+}
+```
 
-Combine multiple filter types for precise results.
+### Use Case 9: Multiple Providers (OR Logic)
+
+Find embeddings from any of multiple providers.
+
+```json
+{
+  "searchTerm": "technical content",
+  "filter": {
+    "should": [
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "provider", "match": { "value": "openai" } },
+      { "key": "provider", "match": { "value": "local" } }
+    ]
+  }
+}
+```
+
+### Use Case 10: Exclude Unwanted Results
+
+Find results excluding truncated content and quoted text.
+
+```json
+{
+  "searchTerm": "complete guide",
+  "filter": {
+    "must_not": [
+      { "key": "is_truncated", "match": { "value": true } },
+      { "key": "has_quotes", "match": { "value": true } }
+    ]
+  }
+}
+```
+
+### Use Case 11: High Similarity Threshold
+
+Find only very similar results with strict matching.
+
+```json
+{
+  "searchTerm": "exact match needed",
+  "k": 5,
+  "threshold": 0.95,
+  "filter": {
+    "must": [
+      { "key": "provider", "match": { "value": "deepinfra" } }
+    ]
+  }
+}
+```
+
+### Use Case 12: Find All Embeddings from a Source
+
+Use a broad search term with specific source filters.
+
+```json
+{
+  "searchTerm": "content",
+  "k": 100,
+  "threshold": 0.5,
+  "filter": {
+    "must": [
+      { "key": "source", "match": { "value": "parquet_import" } },
+      { "key": "has_context", "match": { "value": false } }
+    ]
+  }
+}
+```
+
+### Use Case 13: Complex Multi-Clause Query
+
+Combine multiple clauses for precise results.
 
 ```json
 {
@@ -261,17 +607,22 @@ Combine multiple filter types for precise results.
   "k": 25,
   "threshold": 0.5,
   "filter": {
-    "text": "optimization",
-    "tokens": ">50 & <200",
-    "provider": "deepinfra",
-    "model": "Qwen/Qwen3-Embedding-4B",
-    "is_truncated": false,
-    "source": "parquet_import"
+    "must": [
+      { "key": "source", "match": { "value": "parquet_import" } },
+      { "key": "tokens", "range": { "gte": 50, "lte": 200 } }
+    ],
+    "should": [
+      { "key": "text", "match": { "text": "optimization" } },
+      { "key": "text", "match": { "text": "performance" } }
+    ],
+    "must_not": [
+      { "key": "is_truncated", "match": { "value": true } }
+    ]
   }
 }
 ```
 
-### Use Case 8: Search with Direct Vector
+### Use Case 14: Search with Direct Vector
 
 If you already have a vector, use it directly instead of `searchTerm`.
 
@@ -281,38 +632,65 @@ If you already have a vector, use it directly instead of `searchTerm`.
   "k": 10,
   "threshold": 0.8,
   "filter": {
-    "tokens": ">10"
+    "must": [
+      { "key": "tokens", "range": { "gt": 10 } }
+    ]
   }
 }
 ```
 
-### Use Case 9: High Similarity Threshold
+### Use Case 15: Date Range Filter
 
-Find only very similar results.
+Find embeddings created within a date range.
 
 ```json
 {
-  "searchTerm": "exact match needed",
-  "k": 5,
-  "threshold": 0.95,
+  "searchTerm": "recent updates",
   "filter": {
-    "provider": "deepinfra"
+    "must": [
+      {
+        "key": "created_at",
+        "range": {
+          "gte": "2024-06-01T00:00:00Z",
+          "lt": "2024-07-01T00:00:00Z"
+        }
+      }
+    ]
   }
 }
 ```
 
-### Use Case 10: Find All Embeddings from a Source
+### Use Case 16: Deeply Nested Logic
 
-Use a broad search term with specific filters.
+Complex nested conditions for advanced queries. This example matches:
+- Source is "parquet_import" AND either:
+  - (deepinfra provider with specific model) OR
+  - (openai provider with >=100 tokens and not truncated)
 
 ```json
 {
   "searchTerm": "content",
-  "k": 100,
-  "threshold": 0.5,
   "filter": {
-    "source": "parquet_import",
-    "has_context": false
+    "must": [
+      { "key": "source", "match": { "value": "parquet_import" } }
+    ],
+    "should": [
+      {
+        "must": [
+          { "key": "provider", "match": { "value": "deepinfra" } },
+          { "key": "model", "match": { "value": "Qwen/Qwen3-Embedding-4B" } }
+        ]
+      },
+      {
+        "must": [
+          { "key": "provider", "match": { "value": "openai" } },
+          { "key": "tokens", "range": { "gte": 100 } }
+        ],
+        "must_not": [
+          { "key": "is_truncated", "match": { "value": true } }
+        ]
+      }
+    ]
   }
 }
 ```
@@ -342,8 +720,7 @@ Use a broad search term with specific filters.
         "model": "Qwen/Qwen3-Embedding-4B",
         "tokens": 35
       }
-    },
-    ...
+    }
   ],
   "count": 10
 }
@@ -385,83 +762,108 @@ Use a broad search term with specific filters.
 - **Balanced results:** `threshold: 0.70-0.80` (default: 0.65)
 - **Broad search:** `threshold: 0.50-0.65`
 
-### 3. Combine Filters Wisely
+### 3. Choose the Right Clause
+
+- Use `must` for required criteria (AND logic)
+- Use `should` for alternatives (OR logic)
+- Use `must_not` for exclusions (NOT logic)
+
+### 4. Avoid Over-Filtering
 
 Don't over-filter! Start broad and narrow down:
 
-```json
-// Good: Start with one or two filters
-{
-  "searchTerm": "query",
-  "filter": {
-    "tokens": ">20",
-    "provider": "deepinfra"
-  }
-}
+**Good: Start with one or two conditions**
 
-// May be too restrictive
+```json
 {
   "searchTerm": "query",
   "filter": {
-    "tokens": ">20 & <25",
-    "provider": "deepinfra",
-    "model": "specific-model",
-    "has_quotes": false,
-    "has_context": true,
-    "is_truncated": false
+    "must": [
+      { "key": "tokens", "range": { "gt": 20 } },
+      { "key": "provider", "match": { "value": "deepinfra" } }
+    ]
   }
 }
 ```
 
-### 4. Text Substring Matching
-
-For substring matching on text fields, keep queries reasonably specific:
+**May be too restrictive:**
 
 ```json
-// Good: Specific phrase
 {
-  "filter": { "text": "neural network optimization" }
-}
-
-// Less useful: Too generic
-{
-  "filter": { "text": "the" }
+  "searchTerm": "query",
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "gt": 20, "lt": 25 } },
+      { "key": "provider", "match": { "value": "deepinfra" } },
+      { "key": "model", "match": { "value": "specific-model" } },
+      { "key": "has_quotes", "match": { "value": false } },
+      { "key": "has_context", "match": { "value": true } },
+      { "key": "is_truncated", "match": { "value": false } }
+    ]
+  }
 }
 ```
 
-### 5. Performance Tips
+### 5. Use Text Match for Substrings
+
+For partial text matching, use `match.text`:
+
+```json
+{ "key": "text", "match": { "text": "neural network" } }
+```
+
+For exact value matching, use `match.value`:
+
+```json
+{ "key": "source", "match": { "value": "parquet_import" } }
+```
+
+### 6. Performance Tips
 
 - **Index common fields:** The following fields are automatically indexed: `text`, `original_text`, `source`, `provider`, `model`
-- **Use range queries:** More efficient than multiple exact matches
+- **Combine conditions efficiently:** Use `should` for OR operations rather than separate queries
 - **Limit results:** Don't request more than you need
 
-### 6. Testing Filters
+### 7. Testing Filters
 
 Test your filters incrementally:
 
 1. Start without filters
-2. Add one filter at a time
+2. Add one condition at a time
 3. Check result counts
 4. Adjust threshold if needed
+5. Add more conditions or clauses as needed
+
+Example incremental testing:
+
+```json
+// Step 1: No filter
+{ "searchTerm": "query" }
+
+// Step 2: Add one must condition
+{ "searchTerm": "query", "filter": { "must": [{ "key": "provider", "match": { "value": "deepinfra" } }] } }
+
+// Step 3: Add token range
+{ "searchTerm": "query", "filter": { "must": [{ "key": "provider", "match": { "value": "deepinfra" } }, { "key": "tokens", "range": { "gt": 20 } }] } }
+```
 
 ---
 
 ## Common Metadata Fields
 
-Based on your data structure, common metadata fields include:
-
-| Field | Type | Description | Filter Type |
-|-------|------|-------------|-------------|
-| `text` | string | The main text content | Substring |
-| `original_text` | string | Original unmodified text | Substring |
-| `source` | string | Data source identifier | Exact |
-| `provider` | string | Embedding provider | Exact |
-| `model` | string | Model used for embedding | Exact |
-| `tokens` | number | Token count | Exact/Range |
-| `has_context` | boolean | Whether context is included | Exact |
-| `has_quotes` | boolean | Whether text contains quotes | Exact |
-| `is_truncated` | boolean | Whether text was truncated | Exact |
-| `character_difference` | number | Char count difference | Exact/Range |
+| Field | Type | Description | Recommended Condition |
+|-------|------|-------------|----------------------|
+| `text` | string | The main text content | `match.text` (substring) |
+| `original_text` | string | Original unmodified text | `match.text` (substring) |
+| `source` | string | Data source identifier | `match.value` (exact) |
+| `provider` | string | Embedding provider | `match.value` (exact) |
+| `model` | string | Model used for embedding | `match.value` (exact) |
+| `tokens` | number | Token count | `range` |
+| `has_context` | boolean | Whether context is included | `match.value` (exact) |
+| `has_quotes` | boolean | Whether text contains quotes | `match.value` (exact) |
+| `is_truncated` | boolean | Whether text was truncated | `match.value` (exact) |
+| `character_difference` | number | Char count difference | `range` |
+| `created_at` | datetime | Creation timestamp | `range` (datetime) |
 
 ---
 
@@ -472,28 +874,99 @@ Based on your data structure, common metadata fields include:
 1. **Check your threshold:** Lower it to see if you get results
 2. **Remove filters:** Test without filters first
 3. **Verify field names:** Ensure filter keys match your metadata structure
-4. **Check data:** Confirm embeddings exist with those characteristics
+4. **Check clause logic:** Ensure `should` clauses have at least one matching condition
 
-### Too Many Results
+### Filter Validation Errors
 
-1. **Increase threshold:** Get more similar results only
-2. **Add filters:** Narrow down by metadata
-3. **Reduce k:** Limit number of results
+1. **Check condition structure:** Each condition must have `key` and either `match` or `range`
+2. **Verify match type:** Use `match.value` for exact or `match.text` for substring
+3. **Validate range operators:** Use `gt`, `gte`, `lt`, `lte` (not string operators like ">")
 
-### Filters Not Working
+### Unexpected Results
 
-1. **Check field names:** Must match metadata exactly (case-sensitive)
-2. **Verify data types:** Use correct filter type for the field
-3. **Test incrementally:** Add one filter at a time
+1. **Review clause logic:** `must` = AND, `should` = OR, `must_not` = NOT
+2. **Check nesting:** Ensure nested clauses are properly structured
+3. **Verify data types:** Match boolean with boolean, number with number
+
+---
+
+## Filter Formats
+
+This API supports **two filter formats**. The system automatically detects which format you're using based on whether the filter object contains `must`, `should`, or `must_not` keys.
+
+### Legacy Format (Still Supported)
+
+The simple flat key-value format for basic filtering:
+
+```json
+{
+  "filter": {
+    "tokens": ">50",
+    "provider": "deepinfra",
+    "is_truncated": false
+  }
+}
+```
+
+**Legacy format features:**
+- String values use substring matching (case-insensitive)
+- Non-string values (numbers, booleans) use exact matching
+- Range operators: `">10"`, `">=10"`, `"<50"`, `"<=50"`, `">10 & <50"`
+- All conditions are combined with AND logic
+
+### New Clause-Based Format (Recommended)
+
+The advanced format with `must`, `should`, and `must_not` clauses:
+
+```json
+{
+  "filter": {
+    "must": [
+      { "key": "tokens", "range": { "gt": 50 } },
+      { "key": "provider", "match": { "value": "deepinfra" } }
+    ]
+  }
+}
+```
+
+**New format features:**
+- AND logic with `must`
+- OR logic with `should`
+- NOT logic with `must_not`
+- Recursive nesting for complex queries
+- Datetime filtering with ISO 8601 or Unix timestamps
+- Explicit control over match type (`match.value` vs `match.text`)
+
+### When to Use Each Format
+
+| Use Case | Recommended Format |
+|----------|-------------------|
+| Simple AND conditions | Legacy (simpler syntax) |
+| OR conditions needed | New format (use `should`) |
+| Exclusions needed | New format (use `must_not`) |
+| Complex nested logic | New format |
+| Datetime filtering | New format |
+| Quick prototyping | Legacy (less verbose) |
+
+### Format Comparison
+
+| Legacy Syntax | New Syntax |
+|---------------|------------|
+| `"field": "value"` | `{ "key": "field", "match": { "text": "value" } }` |
+| `"field": true` | `{ "key": "field", "match": { "value": true } }` |
+| `"field": 50` | `{ "key": "field", "match": { "value": 50 } }` |
+| `"field": ">50"` | `{ "key": "field", "range": { "gt": 50 } }` |
+| `"field": ">=50"` | `{ "key": "field", "range": { "gte": 50 } }` |
+| `"field": "<50"` | `{ "key": "field", "range": { "lt": 50 } }` |
+| `"field": "<=50"` | `{ "key": "field", "range": { "lte": 50 } }` |
+| `"field": ">10 & <50"` | `{ "key": "field", "range": { "gt": 10, "lt": 50 } }` |
 
 ---
 
 ## Postman Collection Example
 
-Here's a complete Postman request setup:
-
-**Method:** POST
-**URL:** `http://localhost:3000/embeddings/search`
+**Method:** POST  
+**URL:** `http://localhost:3000/embeddings/search`  
 **Headers:**
 ```
 Content-Type: application/json
@@ -506,9 +979,13 @@ Content-Type: application/json
   "k": 20,
   "threshold": 0.7,
   "filter": {
-    "tokens": ">50 & <150",
-    "provider": "deepinfra",
-    "has_context": true
+    "must": [
+      { "key": "tokens", "range": { "gte": 50, "lte": 150 } },
+      { "key": "provider", "match": { "value": "deepinfra" } }
+    ],
+    "must_not": [
+      { "key": "is_truncated", "match": { "value": true } }
+    ]
   }
 }
 ```
