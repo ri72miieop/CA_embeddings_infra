@@ -20,7 +20,8 @@
     "analyze-completed-queue": "bun run scripts/analyze-failed-queue-items.ts --type completed",
     "analyze-queue": "bun run scripts/analyze-failed-queue-items.ts",
     "supabase-listen": "bun run scripts/supabase-tweets-listener.ts",
-    "benchmark": "bun run scripts/benchmark-vector-store.ts"
+    "benchmark": "bun run scripts/benchmark-vector-store.ts",
+    "download-images": "bun run scripts/download_images.ts"
   },
   "dependencies": {
     "@ai-sdk/deepinfra": "^1.0.20",
