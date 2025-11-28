@@ -11,9 +11,9 @@ alerting:
         - targets: []
 
 scrape_configs:
-  - job_name: 'embedscnn'
+  - job_name: 'ca_embed'
     static_configs:
-      - targets: ['embedscnn:9090']
+      - targets: ['embeddings:3000']
     scrape_interval: 5s
     metrics_path: '/metrics'
 

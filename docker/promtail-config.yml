@@ -1,0 +1,63 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape Docker container logs
+  - job_name: containers
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: containerlogs
+          __path__: /var/lib/docker/containers/*/*log
+
+    pipeline_stages:
+      # Parse Docker JSON log format
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            timestamp: time
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - output:
+          source: output
+
+      # Extract container name from path
+      - regex:
+          expression: '/var/lib/docker/containers/(?P<container_id>[^/]+)/.*'
+          source: filename
+      - labels:
+          container_id:
+          stream:
+
+      # Parse Pino JSON logs for structured data
+      - match:
+          selector: '{job="containerlogs"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  msg: msg
+                  correlationId: correlationId
+                  operation: operation
+                  traceId: traceId
+                  spanId: spanId
+            - labels:
+                level:
+                operation:
+            # Extract traceId for Tempo correlation
+            - template:
+                source: traceId
+                template: '{{ .traceId }}'
+            - labels:
+                traceId:
+

@@ -23,7 +23,7 @@ const envSchema = z.object({
   ENABLE_METRICS: z.string().default('true').transform(val => val === 'true'),
   METRICS_PORT: z.string().default('9090').transform(Number),
   ENABLE_TRACING: z.string().default('true').transform(val => val === 'true'),
-  JAEGER_ENDPOINT: z.string().optional(),
+  OTLP_ENDPOINT: z.string().optional(),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 
   RATE_LIMIT_MAX: z.string().default('100').transform(Number),
@@ -84,7 +84,7 @@ export const appConfig: AppConfig = {
     enableMetrics: env.ENABLE_METRICS,
     metricsPort: env.METRICS_PORT,
     enableTracing: env.ENABLE_TRACING,
-    jaegerEndpoint: env.JAEGER_ENDPOINT,
+    otlpEndpoint: env.OTLP_ENDPOINT,
     logLevel: env.LOG_LEVEL,
   },
   rateLimit: {

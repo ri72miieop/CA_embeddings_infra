@@ -1,151 +1,164 @@
-import { register, collectDefaultMetrics } from 'prom-client';
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from 'prom-client';
 import { appConfig } from '../config/index.js';
-import {
-  PersistentCounter,
-  PersistentGauge,
-  PersistentHistogram,
-  initializePersistentMetrics,
-  closePersistentMetrics,
-  getPersistentMetrics
-} from '../utils/persistent-metric-wrappers.js';
 
+// Create a custom registry
+export const register = new Registry();
+
+// Collect default metrics (CPU, memory, etc.)
 if (appConfig.observability.enableMetrics) {
-  collectDefaultMetrics();
+  collectDefaultMetrics({ register });
 }
 
-// Initialize persistent metrics
+// Initialize metrics (no-op now, kept for API compatibility)
 export async function initializeMetrics(): Promise<void> {
-  await initializePersistentMetrics('./data/metrics.json');
+  // No initialization needed for prom-client
 }
 
 export async function closeMetrics(): Promise<void> {
-  await closePersistentMetrics();
+  // No cleanup needed for prom-client
 }
 
-// Persistent metrics with same API as Prometheus metrics
-export const httpRequestsTotal = new PersistentCounter({
+// HTTP metrics
+export const httpRequestsTotal = new Counter({
   name: 'http_requests_total',
   help: 'Total number of HTTP requests',
   labelNames: ['method', 'route', 'status_code'],
+  registers: [register],
 });
 
-export const httpRequestDuration = new PersistentHistogram({
+export const httpRequestDuration = new Histogram({
   name: 'http_request_duration_seconds',
   help: 'Duration of HTTP requests in seconds',
   labelNames: ['method', 'route'],
   buckets: [0.001, 0.005, 0.015, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 1],
+  registers: [register],
 });
 
-export const embeddingOperationDuration = new PersistentHistogram({
+export const activeConnections = new Gauge({
+  name: 'active_connections',
+  help: 'Number of active connections',
+  registers: [register],
+});
+
+// Embedding operation metrics
+export const embeddingOperationDuration = new Histogram({
   name: 'embedding_operation_duration_seconds',
   help: 'Duration of embedding operations in seconds',
   labelNames: ['operation'],
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+  registers: [register],
 });
 
-// Note: vectorCount is handled separately by PersistentCounter in embedding-service.ts
-// Keeping this for backward compatibility but it won't be used
-export const vectorCount = new PersistentGauge({
+export const vectorCount = new Gauge({
   name: 'vector_count_total',
   help: 'Total number of vectors stored',
+  registers: [register],
 });
 
-export const searchAccuracy = new PersistentHistogram({
+export const searchAccuracy = new Histogram({
   name: 'search_accuracy_score',
   help: 'Search accuracy scores',
   buckets: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0],
+  registers: [register],
 });
 
-export const activeConnections = new PersistentGauge({
-  name: 'active_connections',
-  help: 'Number of active connections',
-});
-
-export const errorRate = new PersistentCounter({
+export const errorRate = new Counter({
   name: 'errors_total',
   help: 'Total number of errors',
   labelNames: ['type', 'operation'],
+  registers: [register],
 });
 
 // Vector store operation counters
-export const vectorStoreOperationsTotal = new PersistentCounter({
+export const vectorStoreOperationsTotal = new Counter({
   name: 'vector_store_operations_total',
   help: 'Total vector store operations by type and status',
-  labelNames: ['operation', 'status'], // operation: insert/search/delete, status: success/failure
+  labelNames: ['operation', 'status'],
+  registers: [register],
 });
 
-export const vectorStoreItemsProcessed = new PersistentCounter({
+export const vectorStoreItemsProcessed = new Counter({
   name: 'vector_store_items_processed_total',
   help: 'Total items processed by operation type',
-  labelNames: ['operation'], // operation: insert/search/delete
+  labelNames: ['operation'],
+  registers: [register],
 });
 
-export const vectorStoreBatchSize = new PersistentHistogram({
+export const vectorStoreBatchSize = new Histogram({
   name: 'vector_store_batch_size',
   help: 'Size of batches processed',
   labelNames: ['operation'],
   buckets: [1, 10, 50, 100, 500, 1000, 5000, 10000],
+  registers: [register],
 });
 
 // Search quality metrics
-export const searchResultsCount = new PersistentHistogram({
+export const searchResultsCount = new Histogram({
   name: 'search_results_count',
   help: 'Number of results returned per search',
   buckets: [0, 1, 5, 10, 25, 50, 100, 500, 1000],
+  registers: [register],
 });
 
-export const embeddingDimension = new PersistentGauge({
+export const embeddingDimension = new Gauge({
   name: 'embedding_dimension_size',
   help: 'Configured embedding dimension size',
+  registers: [register],
 });
 
 // Collection statistics
-export const collectionVectorCount = new PersistentGauge({
+export const collectionVectorCount = new Gauge({
   name: 'collection_vector_count_total',
   help: 'Total vectors in collection',
   labelNames: ['collection'],
+  registers: [register],
 });
 
-export const collectionIndexedPercentage = new PersistentGauge({
+export const collectionIndexedPercentage = new Gauge({
   name: 'collection_indexed_percentage',
   help: 'Percentage of vectors indexed',
   labelNames: ['collection'],
+  registers: [register],
 });
 
 // Queue metrics
-export const queueDepth = new PersistentGauge({
+export const queueDepth = new Gauge({
   name: 'embedding_queue_depth',
   help: 'Current number of items in embedding queue',
+  registers: [register],
 });
 
-export const queueProcessingRate = new PersistentCounter({
+export const queueProcessingRate = new Counter({
   name: 'embedding_queue_processed_total',
   help: 'Total embeddings processed from queue',
-  labelNames: ['status'], // success/failure
+  labelNames: ['status'],
+  registers: [register],
 });
 
-export const queueFileCount = new PersistentGauge({
+export const queueFileCount = new Gauge({
   name: 'embedding_queue_items',
   help: 'Number of queue items by status',
-  labelNames: ['status'], // pending/processing/completed/failed/exported
+  labelNames: ['status'],
+  registers: [register],
 });
 
-export const queueRetryCount = new PersistentCounter({
+export const queueRetryCount = new Counter({
   name: 'embedding_queue_retries_total',
   help: 'Total number of queue item retries',
+  registers: [register],
 });
 
 // Parquet export metrics
-export const parquetBatchCount = new PersistentGauge({
+export const parquetBatchCount = new Gauge({
   name: 'embedding_queue_parquet_batches_total',
   help: 'Total number of Parquet batches created',
+  registers: [register],
 });
 
-export const parquetExportSize = new PersistentCounter({
+export const parquetExportSize = new Counter({
   name: 'embedding_queue_parquet_export_bytes_total',
   help: 'Total size of exported Parquet files in bytes',
+  registers: [register],
 });
 
 export const metricsRegister = register;
-
-export { register, getPersistentMetrics };

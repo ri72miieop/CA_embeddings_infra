@@ -1,8 +1,8 @@
 import { NodeSDK } from '@opentelemetry/sdk-node';
-import { JaegerExporter } from '@opentelemetry/exporter-jaeger';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { FastifyInstrumentation } from '@opentelemetry/instrumentation-fastify';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { appConfig } from '../config/index.js';
 import { logger } from './logger.js';
 
@@ -15,19 +15,19 @@ export function initializeTracing(): void {
   }
 
   try {
-    const jaegerExporter = new JaegerExporter({
-      endpoint: appConfig.observability.jaegerEndpoint || 'http://localhost:14268/api/traces',
+    const otlpExporter = new OTLPTraceExporter({
+      url: appConfig.observability.otlpEndpoint || 'http://localhost:4318/v1/traces',
     });
 
     sdk = new NodeSDK({
       resource: {
         attributes: {
-          [SEMRESATTRS_SERVICE_NAME]: 'ca_embed',
-          [SEMRESATTRS_SERVICE_VERSION]: '1.0.0',
+          [ATTR_SERVICE_NAME]: 'ca_embed',
+          [ATTR_SERVICE_VERSION]: '1.0.0',
         },
         merge: () => {},
       } as any,
-      traceExporter: jaegerExporter,
+      traceExporter: otlpExporter,
       instrumentations: [
         new HttpInstrumentation({
           requestHook: (span, request) => {
@@ -41,7 +41,7 @@ export function initializeTracing(): void {
     });
 
     sdk.start();
-    logger.info('Tracing initialized successfully');
+    logger.info('Tracing initialized successfully (OTLP -> Tempo)');
   } catch (error) {
     logger.error({ error }, 'Failed to initialize tracing');
   }

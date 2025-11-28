@@ -121,7 +121,7 @@ export interface ObservabilityConfig {
   enableMetrics: boolean;
   metricsPort: number;
   enableTracing: boolean;
-  jaegerEndpoint?: string;
+  otlpEndpoint?: string;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 

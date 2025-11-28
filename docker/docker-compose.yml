@@ -1,4 +1,5 @@
 version: '3.8'
+name: ca_embed_infra
 
 services:
   embeddings:
@@ -7,24 +8,18 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-      - "9090:9090"
+    env_file:
+      - ../.env
     environment:
-      - NODE_ENV=production
-      - PORT=3000
+      # Docker-specific overrides (network URLs)
       - HOST=0.0.0.0
-      - VECTOR_STORE=qdrant
       - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION_NAME=embeddings
-      - VECTOR_DIMENSION=1024
-      - ENABLE_METRICS=true
-      - METRICS_PORT=9090
-      - ENABLE_TRACING=true
-      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
-      - LOG_LEVEL=info
+      - OTLP_ENDPOINT=http://tempo:4318/v1/traces
     depends_on:
       - qdrant
-      - jaeger
+      - tempo
       - prometheus
+      - loki
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
@@ -32,6 +27,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -48,6 +48,7 @@ services:
       - "9091:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -56,6 +57,7 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
     restart: unless-stopped
 
   grafana:
@@ -65,24 +67,57 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+      - loki
+      - tempo
     restart: unless-stopped
 
-  jaeger:
-    image: jaegertracing/all-in-one:latest
+  # Grafana Tempo - Distributed Tracing
+  tempo:
+    image: grafana/tempo:latest
+    user: "0"  # Run as root to avoid permission issues
     ports:
-      - "16686:16686"
-      - "14268:14268"
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
+      - "3200:3200"   # Tempo API
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - ./tempo-config.yml:/etc/tempo/config.yml
+      - tempo_data:/var/tempo
+    command:
+      - '-config.file=/etc/tempo/config.yml'
+    restart: unless-stopped
+
+  # Grafana Loki - Log Aggregation
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  # Promtail - Log Shipper
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
     restart: unless-stopped
 
 volumes:
   qdrant_data:
   prometheus_data:
   grafana_data:
+  tempo_data:
+  loki_data:
