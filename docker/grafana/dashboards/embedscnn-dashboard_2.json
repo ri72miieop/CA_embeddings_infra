@@ -1,0 +1,216 @@
+{
+  "uid": "ca-embed-operations",
+  "title": "CA Embed - Operations & Queue",
+  "tags": ["ca_embed", "queue", "operations"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Queue Status",
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "title": "Queue Depth",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "embedding_queue_depth or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 100},
+            {"color": "red", "value": 1000}
+          ]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1}
+    },
+    {
+      "id": 3,
+      "title": "Pending Items",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "embedding_queue_items{status=\"pending\"} or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1}
+    },
+    {
+      "id": 4,
+      "title": "Processing",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "embedding_queue_items{status=\"processing\"} or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1}
+    },
+    {
+      "id": 5,
+      "title": "Completed",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "embedding_queue_items{status=\"completed\"} or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1}
+    },
+    {
+      "id": 6,
+      "title": "Failed",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "embedding_queue_items{status=\"failed\"} or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "red", "value": 1}
+          ]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1}
+    },
+    {
+      "id": 7,
+      "title": "Retries",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "embedding_queue_retries_total or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 10}
+          ]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1}
+    },
+    {
+      "id": 10,
+      "title": "Queue Processing Rate",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(embedding_queue_processed_total[1m])) by (status)", "legendFormat": "{{status}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5}
+    },
+    {
+      "id": 11,
+      "title": "Batch Sizes",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(vector_store_batch_size_bucket[5m])) by (le, operation))", "legendFormat": "{{operation}} p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(vector_store_batch_size_bucket[5m])) by (le, operation))", "legendFormat": "{{operation}} p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5}
+    },
+    {
+      "id": 12,
+      "title": "Vector Store Operations",
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13},
+      "collapsed": false
+    },
+    {
+      "id": 13,
+      "title": "Insert Operations",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(vector_store_operations_total{operation=\"insert\"}[1m])) by (status)", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 14}
+    },
+    {
+      "id": 14,
+      "title": "Search Operations",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(vector_store_operations_total{operation=\"search\"}[1m])) by (status)", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 14}
+    },
+    {
+      "id": 15,
+      "title": "Delete Operations",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "sum(rate(vector_store_operations_total{operation=\"delete\"}[1m])) by (status)", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 14}
+    },
+    {
+      "id": 16,
+      "title": "Items Processed by Operation",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(vector_store_items_processed_total[1m])) by (operation)", "legendFormat": "{{operation}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 21}
+    },
+    {
+      "id": 17,
+      "title": "Search Results Distribution",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(search_results_count_bucket[5m])) by (le))", "legendFormat": "p50 results", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(search_results_count_bucket[5m])) by (le))", "legendFormat": "p95 results", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 21}
+    }
+  ]
+}

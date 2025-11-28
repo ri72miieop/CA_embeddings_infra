@@ -1,0 +1,211 @@
+{
+  "uid": "ca-embed-overview",
+  "title": "CA Embed - Overview",
+  "tags": ["ca_embed", "embeddings"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "title": "",
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "panels": [],
+      "collapsed": false
+    },
+    {
+      "id": 2,
+      "title": "Requests / sec",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(http_requests_total[1m]))", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1}
+    },
+    {
+      "id": 3,
+      "title": "Error Rate",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(errors_total[1m])) or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 3,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 0.01},
+            {"color": "red", "value": 0.1}
+          ]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1}
+    },
+    {
+      "id": 4,
+      "title": "P95 Latency",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 0.1},
+            {"color": "red", "value": 0.5}
+          ]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1}
+    },
+    {
+      "id": 5,
+      "title": "Active Connections",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "active_connections", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1}
+    },
+    {
+      "id": 6,
+      "title": "Vectors Stored",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "collection_vector_count_total or vector_count_total or vector(0)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1}
+    },
+    {
+      "id": 7,
+      "title": "Memory (RSS)",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "process_resident_memory_bytes", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 536870912},
+            {"color": "red", "value": 1073741824}
+          ]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1}
+    },
+    {
+      "id": 10,
+      "title": "Request Rate by Route",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(http_requests_total[1m])) by (route)", "legendFormat": "{{route}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5}
+    },
+    {
+      "id": 11,
+      "title": "Response Time Percentiles",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.90, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p90", "refId": "B"},
+        {"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "C"},
+        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 0}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5}
+    },
+    {
+      "id": 12,
+      "title": "HTTP Status Codes",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(http_requests_total[1m])) by (status_code)", "legendFormat": "{{status_code}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "bars", "lineWidth": 1, "fillOpacity": 80}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 13}
+    },
+    {
+      "id": 13,
+      "title": "Errors by Type",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(errors_total[1m])) by (type, operation)", "legendFormat": "{{type}} - {{operation}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 13}
+    },
+    {
+      "id": 14,
+      "title": "Vector Store Operations",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "sum(rate(vector_store_operations_total[1m])) by (operation, status)", "legendFormat": "{{operation}} ({{status}})", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 13}
+    },
+    {
+      "id": 15,
+      "title": "Embedding Operation Duration (P95)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(embedding_operation_duration_seconds_bucket[5m])) by (le, operation))", "legendFormat": "{{operation}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21}
+    },
+    {
+      "id": 16,
+      "title": "System Resources",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"expr": "process_resident_memory_bytes / 1024 / 1024", "legendFormat": "Memory (MB)", "refId": "A"},
+        {"expr": "rate(process_cpu_seconds_total[1m]) * 100", "legendFormat": "CPU %", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21}
+    }
+  ]
+}
