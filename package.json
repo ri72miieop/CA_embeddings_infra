@@ -21,7 +21,7 @@
     "analyze-queue": "bun run scripts/analyze-failed-queue-items.ts",
     "supabase-listen": "bun run scripts/supabase-tweets-listener.ts",
     "benchmark": "bun run scripts/benchmark-vector-store.ts",
-    "download-images": "bun run scripts/download_images.ts"
+    "download-images": "bun run --expose-gc scripts/download_images.ts"
   },
   "dependencies": {
     "@ai-sdk/deepinfra": "^1.0.20",
@@ -52,6 +52,7 @@
     "pino-pretty": "^10.2.3",
     "prom-client": "^15.1.0",
     "ssh2": "^1.17.0",
+    "undici": "^7.16.0",
     "uuid": "^9.0.1",
     "zod": "^3.22.4"
   },
