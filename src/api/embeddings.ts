@@ -411,13 +411,13 @@ const embeddingRoutes: FastifyPluginAsync<EmbeddingRoutes> = async (fastify, { e
           '--parallel', String(parallelWorkers),
           '--stream-upload',
         ];
-        binaryPath = path.join(process.cwd(), 'scripts', 'go', 'qdrant-exporter');
+        binaryPath = path.join(process.cwd(), 'scripts', 'go', 'qdrant_exporter_r2');
       } else {
         // supabase
         args = [
           '--parallel', String(parallelWorkers),
         ];
-        binaryPath = path.join(process.cwd(), 'scripts', 'go', 'supabase-upload');
+        binaryPath = path.join(process.cwd(), 'scripts', 'go', 'qdrant_exporter_supabase');
       }
 
       contextLogger.info({ binaryPath, args, destination }, 'Spawning Go exporter');
