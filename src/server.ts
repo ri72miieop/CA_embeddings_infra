@@ -116,6 +116,8 @@ export async function createServer() {
           supabaseUrl: appConfig.supabase.url,
           supabaseKey: appConfig.supabase.anonKey,
           maxTextLength: appConfig.supabase.maxTextLength,
+          batchSize: appConfig.supabase.batchSize,
+          flushTimeoutMs: appConfig.supabase.flushTimeoutMs,
         },
         embeddingService,
         embeddingGenerationService,
@@ -124,8 +126,10 @@ export async function createServer() {
       await supabaseListener.initialize();
       logger.info({
         supabaseUrl: appConfig.supabase.url,
-        maxTextLength: appConfig.supabase.maxTextLength || 30720
-      }, 'Supabase listener service initialized and subscribed');
+        maxTextLength: appConfig.supabase.maxTextLength,
+        batchSize: appConfig.supabase.batchSize,
+        flushTimeoutMs: appConfig.supabase.flushTimeoutMs
+      }, 'Supabase listener service initialized with batching');
     }
   }
 
