@@ -1,23 +1,56 @@
-node_modules
-npm-debug.log
+# Dependencies
+node_modules/
+
+# Environment files
 .env
 .env.*
 !.env.example
-.git
+
+# Git
+.git/
 .gitignore
-README.md
-.vscode
-.idea
+
+# IDE
+.vscode/
+.idea/
+
+# Documentation
 *.md
 docs/
+
+# Test and dev files
 tests/
 benchmarks/
-scripts/
 examples/
+
+# Scripts (except Go exporter)
+scripts/*
+!scripts/go/
+
+# Data directories
 data/
+data/**
 qdrant_storage/
+
+# Build artifacts
 dist/
+
+# Logs and debug files
 *.log
+npm-debug.log
+*.heapsnapshot
+
+# OS files
 .DS_Store
+nul
+
+# Docker/monitoring configs (not needed in image)
 monitoring/
 docker/
+
+# Misc large files
+*.parquet
+*.ndjson
+*.gz
+
+*/go/*exe

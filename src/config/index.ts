@@ -57,7 +57,18 @@ const envSchema = z.object({
   SUPABASE_LISTENER_ENABLED: z.string().default('false').transform(val => val === 'true'),
   SUPABASE_URL: z.string().optional(),
   SUPABASE_ANON_KEY: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  SUPABASE_STORAGE_BUCKET: z.string().optional(),
   SUPABASE_MAX_TEXT_LENGTH: z.string().default('30720').transform(Number),
+  SUPABASE_BATCH_SIZE: z.string().default('1000').transform(Number),
+  SUPABASE_FLUSH_TIMEOUT_MS: z.string().default('30000').transform(Number),
+
+  // R2 Storage settings (for vector store backups)
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_ENDPOINT: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  BACKUP_INTERVAL_DAYS: z.string().default('7').transform(Number),
 });
 
 const env = envSchema.parse(process.env);
@@ -119,11 +130,23 @@ export const appConfig: AppConfig = {
       parquetExportDir: env.QUEUE_PARQUET_EXPORT_DIR,
     },
   },
-  supabase: env.SUPABASE_LISTENER_ENABLED && env.SUPABASE_URL && env.SUPABASE_ANON_KEY ? {
-    enabled: true,
+  supabase: env.SUPABASE_URL ? {
+    enabled: env.SUPABASE_LISTENER_ENABLED,
     url: env.SUPABASE_URL,
     anonKey: env.SUPABASE_ANON_KEY,
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    storageBucket: env.SUPABASE_STORAGE_BUCKET,
     maxTextLength: env.SUPABASE_MAX_TEXT_LENGTH,
+    batchSize: env.SUPABASE_BATCH_SIZE,
+    flushTimeoutMs: env.SUPABASE_FLUSH_TIMEOUT_MS,
+  } : undefined,
+  r2: env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && env.R2_ENDPOINT && env.R2_BUCKET ? {
+    enabled: true,
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+    endpoint: env.R2_ENDPOINT,
+    bucket: env.R2_BUCKET,
+    backupIntervalDays: env.BACKUP_INTERVAL_DAYS,
   } : undefined,
 };
 

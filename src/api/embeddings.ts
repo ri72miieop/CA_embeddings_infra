@@ -15,6 +15,13 @@ import {
 import { createContextLogger } from '../observability/logger.js';
 import { appConfig } from '../config/index.js';
 import { apiKeyAuthMiddleware } from '../middleware/index.js';
+import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
+
+// Track active export process
+let activeExportProcess: ChildProcess | null = null;
+let exportStartTime: number | null = null;
+let exportLogs: string[] = [];
 
 interface EmbeddingRoutes {
   embeddingService: IVectorStore;
@@ -307,6 +314,254 @@ const embeddingRoutes: FastifyPluginAsync<EmbeddingRoutes> = async (fastify, { e
       });
     }
   });
+
+  /**
+   * Export vector store to cloud storage using Go exporter
+   * POST /embeddings/export
+   * Protected endpoint - requires API key
+   *
+   * @param destination - 'r2' or 'supabase' (required)
+   * @param strategy - Export strategy (only for r2): 'ndjson-gz' | 'parquet-small' | 'parquet-med' | 'parquet-large'
+   *
+   * Spawns the Go binary for efficient parallel export.
+   * Only one export can run at a time.
+   */
+  fastify.post<{
+    Body: {
+      destination: 'r2' | 'supabase';
+      strategy?: 'ndjson-gz' | 'parquet-small' | 'parquet-med' | 'parquet-large';
+    };
+  }>('/embeddings/export', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (request: FastifyRequest<{ Body: { destination: 'r2' | 'supabase'; strategy?: string } }>, reply: FastifyReply) => {
+    const correlationId = (request as any).correlationId;
+    const destination = request.body?.destination;
+    const contextLogger = createContextLogger({
+      correlationId,
+      operation: 'export',
+      destination,
+      strategy: request.body?.strategy,
+    });
+
+    try {
+      // Validate destination parameter
+      if (!destination || !['r2', 'supabase'].includes(destination)) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Invalid or missing destination parameter. Must be "r2" or "supabase".',
+        });
+      }
+
+      contextLogger.info(`Processing ${destination} export request`);
+
+      // Validate configuration based on destination
+      if (destination === 'r2') {
+        if (!appConfig.r2?.enabled) {
+          return reply.status(400).send({
+            success: false,
+            error: 'R2 export is not configured. Set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, and R2_BUCKET environment variables.',
+          });
+        }
+      } else if (destination === 'supabase') {
+        if (!appConfig.supabase?.url) {
+          return reply.status(400).send({
+            success: false,
+            error: 'Supabase export is not configured. Set SUPABASE_URL environment variable.',
+          });
+        }
+        if (!appConfig.supabase?.serviceRoleKey) {
+          return reply.status(400).send({
+            success: false,
+            error: 'Supabase service role key is not configured. Set SUPABASE_SERVICE_ROLE_KEY environment variable.',
+          });
+        }
+        if (!appConfig.supabase?.storageBucket) {
+          return reply.status(400).send({
+            success: false,
+            error: 'Supabase storage bucket is not configured. Set SUPABASE_STORAGE_BUCKET environment variable.',
+          });
+        }
+      }
+
+      // Check if an export is already in progress
+      if (activeExportProcess && !activeExportProcess.killed) {
+        const runningFor = exportStartTime ? Math.round((Date.now() - exportStartTime) / 1000) : 0;
+        return reply.status(409).send({
+          success: false,
+          error: 'Export already in progress',
+          message: `An export process is already running (${runningFor}s elapsed). Please wait for it to complete.`,
+          runningForSeconds: runningFor,
+          recentLogs: exportLogs.slice(-20),
+        });
+      }
+
+      // Calculate parallel workers (half of available CPUs)
+      const cpuCount = (await import('node:os')).cpus().length;
+      const parallelWorkers = Math.max(1, Math.floor(cpuCount / 2));
+
+      // Build command arguments and determine binary based on destination
+      let binaryPath: string;
+      let args: string[];
+
+      if (destination === 'r2') {
+        const strategy = request.body?.strategy || 'parquet-med';
+        args = [
+          '--http',
+          '--strategy', strategy,
+          '--parallel', String(parallelWorkers),
+          '--stream-upload',
+        ];
+        binaryPath = path.join(process.cwd(), 'scripts', 'go', 'qdrant-exporter');
+      } else {
+        // supabase
+        args = [
+          '--parallel', String(parallelWorkers),
+        ];
+        binaryPath = path.join(process.cwd(), 'scripts', 'go', 'supabase-upload');
+      }
+
+      contextLogger.info({ binaryPath, args, destination }, 'Spawning Go exporter');
+
+      // Reset state
+      exportLogs = [];
+      exportStartTime = Date.now();
+
+      // Build environment variables
+      const envVars: Record<string, string> = {
+        ...process.env as Record<string, string>,
+        // Pass Qdrant config
+        QDRANT_URL: appConfig.database.qdrant?.url || 'http://localhost:6333',
+        QDRANT_API_KEY: appConfig.database.qdrant?.apiKey || '',
+        QDRANT_COLLECTION_NAME: appConfig.database.qdrant?.collectionName || 'embeddings',
+        QDRANT_PORT: String(appConfig.database.qdrant?.port || ''),
+        VECTOR_DIMENSION: String(appConfig.database.dimension || 1024),
+      };
+
+      // Add destination-specific env vars
+      if (destination === 'supabase') {
+        envVars.SUPABASE_URL = appConfig.supabase!.url;
+        envVars.SUPABASE_SERVICE_ROLE_KEY = appConfig.supabase!.serviceRoleKey!;
+        envVars.SUPABASE_STORAGE_BUCKET = appConfig.supabase!.storageBucket!;
+      }
+
+      // Spawn the Go exporter process
+      activeExportProcess = spawn(binaryPath, args, {
+        env: envVars,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      const proc = activeExportProcess;
+
+      // Capture stdout
+      proc.stdout?.on('data', (data: Buffer) => {
+        const lines = data.toString().split('\n').filter(Boolean);
+        for (const line of lines) {
+          exportLogs.push(`[stdout] ${line}`);
+          contextLogger.info({ output: line }, 'Go exporter stdout');
+        }
+        if (exportLogs.length > 1000) {
+          exportLogs = exportLogs.slice(-1000);
+        }
+      });
+
+      // Capture stderr
+      proc.stderr?.on('data', (data: Buffer) => {
+        const lines = data.toString().split('\n').filter(Boolean);
+        for (const line of lines) {
+          exportLogs.push(`[stderr] ${line}`);
+          contextLogger.warn({ output: line }, 'Go exporter stderr');
+        }
+      });
+
+      // Handle process completion
+      proc.on('close', (code) => {
+        const duration = exportStartTime ? Date.now() - exportStartTime : 0;
+        if (code === 0) {
+          contextLogger.info({ code, durationMs: duration }, 'Go exporter completed successfully');
+          exportLogs.push(`[system] Export completed successfully in ${Math.round(duration / 1000)}s`);
+        } else {
+          contextLogger.error({ code, durationMs: duration }, 'Go exporter failed');
+          exportLogs.push(`[system] Export failed with code ${code} after ${Math.round(duration / 1000)}s`);
+        }
+        activeExportProcess = null;
+        exportStartTime = null;
+      });
+
+      proc.on('error', (err) => {
+        contextLogger.error({ error: err.message }, 'Go exporter spawn error');
+        exportLogs.push(`[system] Spawn error: ${err.message}`);
+        activeExportProcess = null;
+        exportStartTime = null;
+      });
+
+      // Return immediately - export runs in background
+      reply.status(202).send({
+        success: true,
+        message: `Export to ${destination} started`,
+        destination,
+        status: 'running',
+        pid: proc.pid,
+        args,
+        checkStatusAt: '/embeddings/export/status',
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      contextLogger.error({ error: errorMessage }, 'Export failed to start');
+
+      reply.status(500).send({
+        success: false,
+        error: errorMessage,
+      });
+    }
+  });
+
+  /**
+   * Get export status
+   * GET /embeddings/export/status
+   * Protected endpoint - requires API key
+   */
+  fastify.get('/embeddings/export/status', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (_request: FastifyRequest, reply: FastifyReply) => {
+    const isRunning = activeExportProcess && !activeExportProcess.killed;
+    const runningFor = exportStartTime ? Math.round((Date.now() - exportStartTime) / 1000) : 0;
+
+    reply.send({
+      success: true,
+      status: isRunning ? 'running' : 'idle',
+      runningForSeconds: isRunning ? runningFor : null,
+      pid: isRunning ? activeExportProcess?.pid : null,
+      recentLogs: exportLogs.slice(-50),
+    });
+  });
+
+  /**
+   * Cancel running export
+   * DELETE /embeddings/export
+   * Protected endpoint - requires API key
+   */
+  fastify.delete('/embeddings/export', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (_request: FastifyRequest, reply: FastifyReply) => {
+    if (!activeExportProcess || activeExportProcess.killed) {
+      return reply.status(404).send({
+        success: false,
+        error: 'No export process is running',
+      });
+    }
+
+    const pid = activeExportProcess.pid;
+    activeExportProcess.kill('SIGTERM');
+    exportLogs.push('[system] Export cancelled by user');
+
+    reply.send({
+      success: true,
+      message: 'Export cancelled',
+      pid,
+    });
+  });
+
 };
 
 export default embeddingRoutes;

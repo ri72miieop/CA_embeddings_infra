@@ -218,8 +218,30 @@ export interface StoredEmbeddingCall {
 export interface SupabaseConfig {
   enabled: boolean;
   url: string;
-  anonKey: string;
+  anonKey?: string;
+  serviceRoleKey?: string;
+  storageBucket?: string;
   maxTextLength?: number;
+  batchSize?: number;
+  flushTimeoutMs?: number;
+}
+
+export interface R2Config {
+  enabled: boolean;
+  accessKeyId: string;
+  secretAccessKey: string;
+  endpoint: string;
+  bucket: string;
+  backupIntervalDays: number;
+}
+
+export interface R2ExportResult {
+  success: boolean;
+  latestPath?: string;
+  archivePath?: string;
+  pointsExported: number;
+  durationMs: number;
+  error?: string;
 }
 
 export interface AppConfig {
@@ -230,4 +252,5 @@ export interface AppConfig {
   security: SecurityConfig;
   embeddingGeneration?: EmbeddingGenerationConfig;
   supabase?: SupabaseConfig;
+  r2?: R2Config;
 }
