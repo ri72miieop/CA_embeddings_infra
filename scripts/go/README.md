@@ -1,6 +1,6 @@
-# Qdrant R2 Tools (Go)
+# Qdrant Export Tools (Go)
 
-Go tools for exporting and downloading Qdrant vector data to/from Cloudflare R2 storage.
+Go tools for exporting and downloading Qdrant vector data to/from cloud storage (Cloudflare R2 or Supabase Storage).
 
 ## Features
 
@@ -62,41 +62,49 @@ Go tools for exporting and downloading Qdrant vector data to/from Cloudflare R2 
 
 ```bash
 # Basic export (uses gRPC, default strategy)
-go run main.go
+go run qdrant_exporter_r2.go
 
 # Use HTTP instead of gRPC (when gRPC port is blocked)
-go run main.go --http
+go run qdrant_exporter_r2.go --http
 
 # With options
-go run main.go --parallel 8 --batch-size 5000
+go run qdrant_exporter_r2.go --parallel 8 --batch-size 5000
 
 # Debug mode (keep files, ask before upload)
-go run main.go --debug
+go run qdrant_exporter_r2.go --debug
 
 # Resume from previous run
-go run main.go --resume
+go run qdrant_exporter_r2.go --resume
 
 # Dry run (show what would be exported)
-go run main.go --dry-run
+go run qdrant_exporter_r2.go --dry-run
 
 # Direct parquet export (faster, no DuckDB needed)
-go run main.go --strategy parquet-med --http
+go run qdrant_exporter_r2.go --strategy parquet-med --http
 ```
 
 ### Build and run as executable
 
 ```bash
-# Build
-go build -o qdrant-exporter.exe
+# Build R2 exporter
+go build -o qdrant_exporter_r2.exe qdrant_exporter_r2.go
+
+# Build Supabase exporter
+go build -o qdrant_exporter_supabase.exe qdrant_exporter_supabase.go
 
 # Run
-./qdrant-exporter.exe --parallel 4
+./qdrant_exporter_r2.exe --parallel 4
+./qdrant_exporter_supabase.exe --parallel 4
 ```
 
 ### Cross-compile for Linux
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o qdrant-exporter-linux
+# R2 exporter
+GOOS=linux GOARCH=amd64 go build -o qdrant_exporter_r2 qdrant_exporter_r2.go
+
+# Supabase exporter
+GOOS=linux GOARCH=amd64 go build -o qdrant_exporter_supabase qdrant_exporter_supabase.go
 ```
 
 ## Command Line Options
@@ -162,19 +170,19 @@ SELECT key, vector[1:5] FROM read_parquet('export.parquet') LIMIT 10;
 
 ```bash
 # Safe default for any data size (requires DuckDB)
-go run main.go --strategy ndjson-gz
+go run qdrant_exporter_r2.go --strategy ndjson-gz
 
 # Direct parquet - faster, no DuckDB needed
-go run main.go --strategy parquet-med
+go run qdrant_exporter_r2.go --strategy parquet-med
 
 # Testing memory usage with small row groups
-go run main.go --strategy parquet-small
+go run qdrant_exporter_r2.go --strategy parquet-small
 
 # Custom row group size
-go run main.go --strategy parquet-med --row-group-size 5000
+go run qdrant_exporter_r2.go --strategy parquet-med --row-group-size 5000
 
 # High-memory machine, maximum speed
-go run main.go --strategy parquet-large
+go run qdrant_exporter_r2.go --strategy parquet-large
 ```
 
 ## HTTP vs gRPC
@@ -183,10 +191,10 @@ By default, the exporter uses gRPC (port 6334). If the gRPC port is blocked (com
 
 ```bash
 # Use HTTP REST API instead of gRPC
-go run main.go --http
+go run qdrant_exporter_r2.go --http
 
 # HTTP uses QDRANT_PORT env var (default: 6333)
-QDRANT_PORT=8080 go run main.go --http
+QDRANT_PORT=8080 go run qdrant_exporter_r2.go --http
 ```
 
 ## Streaming Upload (No Disk)
@@ -195,10 +203,10 @@ For parquet strategies, you can stream directly to R2 **without storing anything
 
 ```bash
 # Stream parquet directly to R2 - zero disk usage!
-go run main.go --strategy parquet-small --stream-upload
+go run qdrant_exporter_r2.go --strategy parquet-small --stream-upload
 
 # With custom row group size
-go run main.go --strategy parquet-med --row-group-size 5000 --stream-upload
+go run qdrant_exporter_r2.go --strategy parquet-med --row-group-size 5000 --stream-upload
 ```
 
 **How it works:**
@@ -279,20 +287,20 @@ Example: 6.7M vectors exported in ~29 minutes (~3,850 pts/sec)
 
 ## Downloading from R2
 
-Use the `download.go` script to download exported parquet files from R2:
+Use the `qdrant_downloader.go` script to download exported parquet files from R2:
 
 ```bash
 # List all files in the bucket
-go run download.go --list
+go run qdrant_downloader.go --list
 
 # Download the latest export for the default collection
-go run download.go
+go run qdrant_downloader.go
 
 # Download a specific collection's export
-go run download.go --collection my-vectors
+go run qdrant_downloader.go --collection my-vectors
 
 # Download to a custom path
-go run download.go --output ./data/vectors.parquet
+go run qdrant_downloader.go --output ./data/vectors.parquet
 ```
 
 ### Download Options
@@ -306,8 +314,8 @@ go run download.go --output ./data/vectors.parquet
 ### Build download tool
 
 ```bash
-go build -o download.exe download.go
-./download.exe --list
+go build -o qdrant_downloader.exe qdrant_downloader.go
+./qdrant_downloader.exe --list
 ```
 
 ## Comparison with TypeScript Version
