@@ -695,6 +695,114 @@ export class QdrantVectorStore implements IVectorStore {
     }
   }
 
+  /**
+   * Update metadata for existing vectors without modifying the vectors themselves
+   * Uses Qdrant's batchUpdate API for efficient bulk metadata-only updates
+   * @param updates - Array of { key, metadata } to update
+   * @returns Object with updated and failed counts
+   */
+  async updateMetadata(updates: Array<{ key: string; metadata: Record<string, any> }>): Promise<{ updated: number; failed: number }> {
+    this.ensureInitialized();
+
+    const span = tracer.startSpan('qdrant_vector_store_update_metadata');
+    const timer = embeddingOperationDuration.startTimer({ operation: 'update_metadata' });
+    const contextLogger = createContextLogger({
+      operation: 'update_metadata',
+      store: 'qdrant',
+      count: updates.length
+    });
+
+    let updated = 0;
+    let failed = 0;
+
+    try {
+      contextLogger.info('Starting bulk metadata update operation');
+
+      // Process in larger batches using batchUpdate API (single HTTP request per batch)
+      // Qdrant can handle ~1000 operations per batchUpdate call efficiently
+      const BATCH_SIZE = 1000;
+      
+      for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+        const batch = updates.slice(i, i + BATCH_SIZE);
+
+        // Build array of SetPayloadOperation for batchUpdate
+        // Use string IDs to preserve precision for large tweet IDs
+        const operations: Array<{ set_payload: { payload: Record<string, any>; points: string[] } }> = [];
+
+        for (const update of batch) {
+          // Use string ID directly to preserve precision
+          const stringId = update.key;
+
+          operations.push({
+            set_payload: {
+              payload: {
+                key: update.key, // Preserve original string key
+                metadata: update.metadata,
+              },
+              points: [stringId],
+            }
+          });
+        }
+
+        try {
+          // Use batchUpdate to send all operations in a single HTTP request
+          // This is MUCH faster than individual setPayload calls
+          await this.client!.batchUpdate(this.collectionName, {
+            wait: true,
+            operations,
+          });
+          updated += batch.length;
+        } catch (error) {
+          // If batch fails, fall back to individual updates to identify which ones failed
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          contextLogger.warn({ error: errorMessage, batchStart: i, batchSize: batch.length }, 
+            'Batch update failed, falling back to individual updates');
+          
+          for (const op of operations) {
+            try {
+              await this.client!.setPayload(this.collectionName, {
+                wait: true,
+                points: op.set_payload.points,
+                payload: op.set_payload.payload,
+              });
+              updated++;
+            } catch (individualError) {
+              failed++;
+              const individualErrorMessage = individualError instanceof Error ? individualError.message : 'Unknown error';
+              contextLogger.warn({ key: op.set_payload.payload.key, error: individualErrorMessage }, 
+                'Failed to update metadata for point');
+            }
+          }
+        }
+
+        // Log progress for large updates
+        if (updates.length > BATCH_SIZE && (i + BATCH_SIZE) % (BATCH_SIZE * 10) === 0) {
+          contextLogger.info({
+            progress: Math.min(i + BATCH_SIZE, updates.length),
+            total: updates.length,
+            updated,
+            failed
+          }, 'Metadata update progress');
+        }
+      }
+
+      contextLogger.info({ updated, failed }, 'Bulk metadata update completed');
+      span.setStatus({ code: SpanStatusCode.OK });
+      
+      return { updated, failed };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      contextLogger.error({ error: errorMessage, updated, failed }, 'Failed to complete metadata update');
+      errorRate.inc({ type: 'database', operation: 'update_metadata' });
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage });
+      throw error;
+    } finally {
+      timer();
+      span.end();
+    }
+  }
+
   async getStats(): Promise<{ vectorCount: number; dbSize: string }> {
     this.ensureInitialized();
 
@@ -728,6 +836,338 @@ export class QdrantVectorStore implements IVectorStore {
       throw error;
     } finally {
       span.end();
+    }
+  }
+
+  /**
+   * Scroll through all points in the collection for efficient export
+   * Uses cursor-based pagination to handle large datasets without loading all into memory
+   * @param batchSize Number of points to retrieve per scroll request (default: 10000)
+   * @yields Batches of Qdrant points with their vectors and payloads
+   */
+  async *scrollPoints(batchSize: number = 10000): AsyncGenerator<Array<{
+    id: string | number;
+    vector: number[];
+    payload: Record<string, any>;
+  }>, void, unknown> {
+    this.ensureInitialized();
+
+    const contextLogger = createContextLogger({ operation: 'scroll', store: 'qdrant', batchSize });
+    contextLogger.info('Starting scroll operation');
+
+    let offset: string | number | null = null;
+    let totalYielded = 0;
+
+    while (true) {
+      const scrollParams: any = {
+        limit: batchSize,
+        with_payload: true,
+        with_vector: true,
+      };
+
+      if (offset !== null) {
+        scrollParams.offset = offset;
+      }
+
+      const response = await this.client!.scroll(this.collectionName, scrollParams);
+
+      if (!response.points || response.points.length === 0) {
+        contextLogger.info({ totalYielded }, 'Scroll operation completed');
+        break;
+      }
+
+      // Transform points to a consistent format
+      const points = response.points.map(point => ({
+        id: point.id,
+        vector: point.vector as number[],
+        payload: point.payload as Record<string, any>,
+      }));
+
+      totalYielded += points.length;
+      contextLogger.debug({ batchSize: points.length, totalYielded }, 'Yielding batch of points');
+
+      yield points;
+
+      // Get next page offset (can be string, number, or undefined)
+      const nextOffset = response.next_page_offset;
+      if (nextOffset === undefined || nextOffset === null) {
+        contextLogger.info({ totalYielded }, 'Scroll operation completed');
+        break;
+      }
+      // Cast to expected type - Qdrant typically returns string or number for scroll offset
+      offset = nextOffset as string | number;
+    }
+  }
+
+  /**
+   * Get total points count in the collection
+   * @returns Points count
+   */
+  async getPointsCount(): Promise<number> {
+    this.ensureInitialized();
+    const collectionInfo = await this.client!.getCollection(this.collectionName);
+    return collectionInfo.points_count || 0;
+  }
+
+  /**
+   * Fast scroll to collect only point IDs (no vectors, minimal payload)
+   * Used as first pass for parallel export - ID collection is very fast
+   * @param batchSize Number of points per scroll request
+   * @param onProgress Optional callback for progress updates
+   * @yields Arrays of point IDs with their key payload
+   */
+  async *scrollPointIds(
+    batchSize: number = 10000,
+    onProgress?: (count: number) => void
+  ): AsyncGenerator<Array<{ id: string | number; key: string }>, void, unknown> {
+    this.ensureInitialized();
+
+    const contextLogger = createContextLogger({
+      operation: 'scrollPointIds',
+      store: 'qdrant',
+      batchSize
+    });
+    contextLogger.info('Starting fast ID-only scroll');
+
+    let offset: string | number | null = null;
+    let totalYielded = 0;
+
+    while (true) {
+      const scrollParams: any = {
+        limit: batchSize,
+        with_payload: { include: ['key'] }, // Only get the key field
+        with_vector: false, // No vectors - this is the key optimization
+      };
+
+      if (offset !== null) {
+        scrollParams.offset = offset;
+      }
+
+      const response = await this.client!.scroll(this.collectionName, scrollParams);
+
+      if (!response.points || response.points.length === 0) {
+        contextLogger.info({ totalYielded }, 'ID scroll completed');
+        break;
+      }
+
+      const points = response.points.map(point => ({
+        id: point.id,
+        key: (point.payload as any)?.key as string || String(point.id),
+      }));
+
+      totalYielded += points.length;
+
+      if (onProgress) {
+        onProgress(totalYielded);
+      }
+
+      yield points;
+
+      const nextOffset = response.next_page_offset;
+      if (nextOffset === undefined || nextOffset === null) {
+        contextLogger.info({ totalYielded }, 'ID scroll completed');
+        break;
+      }
+      offset = nextOffset as string | number;
+    }
+  }
+
+  /**
+   * Retrieve full point data for a list of point IDs
+   * Used as second pass for parallel export - can be called in parallel for different ID sets
+   * @param ids Array of point IDs to retrieve
+   * @returns Array of points with full data (id, vector, payload)
+   */
+  async retrievePoints(
+    ids: Array<string | number>
+  ): Promise<Array<{ id: string | number; vector: number[]; payload: Record<string, any> }>> {
+    this.ensureInitialized();
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const contextLogger = createContextLogger({
+      operation: 'retrievePoints',
+      store: 'qdrant',
+      count: ids.length
+    });
+    contextLogger.debug('Retrieving points by IDs');
+
+    const response = await this.client!.retrieve(this.collectionName, {
+      ids: ids,
+      with_payload: true,
+      with_vector: true,
+    });
+
+    return response.map(point => ({
+      id: point.id,
+      vector: point.vector as number[],
+      payload: point.payload as Record<string, any>,
+    }));
+  }
+
+  /**
+   * Get the minimum and maximum point IDs in the collection
+   * Used for partitioning parallel scroll operations
+   * @returns Object with minId and maxId (as BigInts for precision)
+   */
+  async getIdBounds(): Promise<{ minId: bigint; maxId: bigint } | null> {
+    this.ensureInitialized();
+    const contextLogger = createContextLogger({ operation: 'getIdBounds', store: 'qdrant' });
+
+    try {
+      // Get min ID by scrolling with ascending order (default)
+      const minResponse = await this.client!.scroll(this.collectionName, {
+        limit: 1,
+        with_payload: false,
+        with_vector: false,
+        order_by: { key: '', direction: 'asc' }, // Order by internal ID
+      });
+
+      // Get max ID by scrolling with descending order
+      const maxResponse = await this.client!.scroll(this.collectionName, {
+        limit: 1,
+        with_payload: false,
+        with_vector: false,
+        order_by: { key: '', direction: 'desc' },
+      });
+
+      if (!minResponse.points?.length || !maxResponse.points?.length) {
+        contextLogger.warn('No points found in collection');
+        return null;
+      }
+
+      const minId = BigInt(minResponse.points[0].id);
+      const maxId = BigInt(maxResponse.points[0].id);
+
+      contextLogger.info({ minId: minId.toString(), maxId: maxId.toString() }, 'Retrieved ID bounds');
+      return { minId, maxId };
+    } catch (error) {
+      // Fallback: if order_by doesn't work, try sampling approach
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      contextLogger.warn({ error: errorMessage }, 'order_by failed, using sampling fallback');
+
+      // Sample some IDs to estimate bounds
+      const sampleResponse = await this.client!.scroll(this.collectionName, {
+        limit: 1000,
+        with_payload: false,
+        with_vector: false,
+      });
+
+      if (!sampleResponse.points?.length) {
+        return null;
+      }
+
+      const ids = sampleResponse.points.map(p => BigInt(p.id));
+      const minId = ids.reduce((a, b) => a < b ? a : b);
+      const maxId = ids.reduce((a, b) => a > b ? a : b);
+
+      contextLogger.info({ minId: minId.toString(), maxId: maxId.toString(), sampleSize: ids.length }, 'Estimated ID bounds from sample');
+      return { minId, maxId };
+    }
+  }
+
+  /**
+   * Scroll through points within a specific ID range
+   * Used for parallel export by partitioning the ID space
+   * @param minId Minimum point ID (inclusive)
+   * @param maxId Maximum point ID (inclusive)
+   * @param batchSize Number of points per scroll request
+   * @yields Batches of points within the ID range
+   */
+  async *scrollPointsInRange(
+    minId: bigint,
+    maxId: bigint,
+    batchSize: number = 10000
+  ): AsyncGenerator<Array<{
+    id: string | number;
+    vector: number[];
+    payload: Record<string, any>;
+  }>, void, unknown> {
+    this.ensureInitialized();
+
+    const contextLogger = createContextLogger({
+      operation: 'scrollRange',
+      store: 'qdrant',
+      minId: minId.toString(),
+      maxId: maxId.toString(),
+      batchSize
+    });
+    contextLogger.info('Starting range scroll operation');
+
+    let offset: string | number | null = null;
+    let totalYielded = 0;
+
+    // Build filter for ID range
+    const rangeFilter = {
+      must: [
+        {
+          key: 'id', // Special Qdrant filter for point ID
+          range: {
+            gte: Number(minId),
+            lte: Number(maxId),
+          },
+        },
+      ],
+    };
+
+    while (true) {
+      const scrollParams: any = {
+        limit: batchSize,
+        with_payload: true,
+        with_vector: true,
+        filter: rangeFilter,
+      };
+
+      if (offset !== null) {
+        scrollParams.offset = offset;
+      }
+
+      const response = await this.client!.scroll(this.collectionName, scrollParams);
+
+      if (!response.points || response.points.length === 0) {
+        contextLogger.info({ totalYielded }, 'Range scroll completed');
+        break;
+      }
+
+      // Transform points to a consistent format
+      const points = response.points.map(point => ({
+        id: point.id,
+        vector: point.vector as number[],
+        payload: point.payload as Record<string, any>,
+      }));
+
+      totalYielded += points.length;
+      contextLogger.debug({ batchSize: points.length, totalYielded }, 'Yielding batch from range');
+
+      yield points;
+
+      const nextOffset = response.next_page_offset;
+      if (nextOffset === undefined || nextOffset === null) {
+        contextLogger.info({ totalYielded }, 'Range scroll completed');
+        break;
+      }
+      offset = nextOffset as string | number;
+    }
+  }
+
+  /**
+   * Get collection cluster info including shard count
+   * @returns Cluster info with shard details
+   */
+  async getClusterInfo(): Promise<{ shardCount: number; localShards: number[] }> {
+    this.ensureInitialized();
+
+    try {
+      const clusterInfo = await this.client!.getCollectionClusterInfo(this.collectionName);
+      const localShards = clusterInfo.local_shards?.map(s => s.shard_id) || [];
+      const shardCount = clusterInfo.shard_count || localShards.length || 1;
+
+      return { shardCount, localShards };
+    } catch (error) {
+      // If cluster info not available (single node), return defaults
+      return { shardCount: 1, localShards: [0] };
     }
   }
 

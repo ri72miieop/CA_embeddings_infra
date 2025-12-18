@@ -156,6 +156,25 @@ export const GenerateEmbeddingsSchema = z.object({
   items: z.array(EmbeddingGenerationItemSchema).min(1).max(1000),
 });
 
+// ============================================================================
+// Metadata Update Schema
+// ============================================================================
+
+/**
+ * Schema for a single metadata update item
+ */
+export const MetadataUpdateItemSchema = z.object({
+  key: z.string().min(1).max(255),
+  metadata: z.record(z.any()),
+});
+
+/**
+ * Schema for bulk metadata update request
+ */
+export const UpdateMetadataSchema = z.object({
+  items: z.array(MetadataUpdateItemSchema).min(1).max(10000),
+});
+
 export const validateVector = (vector: number[], expectedDimension: number): void => {
   if (vector.length !== expectedDimension) {
     throw new Error(`Vector dimension mismatch. Expected ${expectedDimension}, got ${vector.length}`);
@@ -182,3 +201,5 @@ export type BulkInsertInput = z.infer<typeof BulkInsertSchema>;
 export type BulkDeleteInput = z.infer<typeof BulkDeleteSchema>;
 export type EmbeddingGenerationItemInput = z.infer<typeof EmbeddingGenerationItemSchema>;
 export type GenerateEmbeddingsInput = z.infer<typeof GenerateEmbeddingsSchema>;
+export type MetadataUpdateItemInput = z.infer<typeof MetadataUpdateItemSchema>;
+export type UpdateMetadataInput = z.infer<typeof UpdateMetadataSchema>;

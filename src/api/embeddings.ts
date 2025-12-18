@@ -4,11 +4,13 @@ import {
   BulkInsertSchema,
   BulkDeleteSchema,
   SearchQuerySchema,
+  UpdateMetadataSchema,
   validateVector,
   normalizeVector,
   type BulkInsertInput,
   type BulkDeleteInput,
-  type SearchQueryInput
+  type SearchQueryInput,
+  type UpdateMetadataInput
 } from '../utils/validation.js';
 import { createContextLogger } from '../observability/logger.js';
 import { appConfig } from '../config/index.js';
@@ -235,6 +237,69 @@ const embeddingRoutes: FastifyPluginAsync<EmbeddingRoutes> = async (fastify, { e
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       contextLogger.error({ error: errorMessage }, 'Failed to get statistics');
+
+      reply.status(500).send({
+        success: false,
+        error: errorMessage,
+      });
+    }
+  });
+
+  /**
+   * Update metadata for existing embeddings without modifying vectors
+   * POST /embeddings/update-metadata
+   */
+  fastify.post<{
+    Body: UpdateMetadataInput;
+  }>('/embeddings/update-metadata', {
+    preHandler: apiKeyAuthMiddleware
+  }, async (request: FastifyRequest<{ Body: UpdateMetadataInput }>, reply: FastifyReply) => {
+    const correlationId = (request as any).correlationId;
+    const contextLogger = createContextLogger({
+      correlationId,
+      operation: 'update_metadata',
+      count: request.body.items.length
+    });
+
+    try {
+      contextLogger.info('Processing metadata update request');
+
+      // Validate request body
+      const parsed = UpdateMetadataSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Invalid request body',
+          details: parsed.error.errors,
+        });
+      }
+
+      // Check if the vector store has an updateMetadata method
+      if (!('updateMetadata' in embeddingService) || typeof (embeddingService as any).updateMetadata !== 'function') {
+        throw new Error('Metadata update operation not supported by current vector store');
+      }
+
+      // Convert items to the format expected by updateMetadata
+      const updates = request.body.items.map(item => ({
+        key: item.key,
+        metadata: item.metadata,
+      }));
+
+      // Call the updateMetadata method
+      const result = await (embeddingService as any).updateMetadata(updates);
+
+      reply.send({
+        success: true,
+        message: 'Metadata update completed',
+        updated: result.updated,
+        failed: result.failed,
+        total: request.body.items.length,
+      });
+
+      contextLogger.info({ updated: result.updated, failed: result.failed }, 'Metadata update completed successfully');
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      contextLogger.error({ error: errorMessage }, 'Metadata update failed');
 
       reply.status(500).send({
         success: false,
