@@ -323,17 +323,17 @@ export class SupabaseListenerService {
           character_difference: processed.charactersUsed - fullText.length,
           text: processed.processedText,
           // Tweet metadata fields from Supabase (use != null to preserve zero values)
-          account_id: tweetData.account_id != null ? Number(tweetData.account_id) : undefined,
+          account_id: tweetData.account_id != null ? String(tweetData.account_id) : undefined,
           username: tweetData.username ?? undefined,
           account_display_name: tweetData.account_display_name ?? undefined,
           created_at: tweetData.created_at ?? undefined,
           retweet_count: tweetData.retweet_count != null ? Number(tweetData.retweet_count) : undefined,
           favorite_count: tweetData.favorite_count != null ? Number(tweetData.favorite_count) : undefined,
-          reply_to_tweet_id: tweetData.reply_to_tweet_id != null ? Number(tweetData.reply_to_tweet_id) : undefined,
-          reply_to_user_id: tweetData.reply_to_user_id != null ? Number(tweetData.reply_to_user_id) : undefined,
+          reply_to_tweet_id: tweetData.reply_to_tweet_id != null ? String(tweetData.reply_to_tweet_id) : undefined,
+          reply_to_user_id: tweetData.reply_to_user_id != null ? String(tweetData.reply_to_user_id) : undefined,
           reply_to_username: tweetData.reply_to_username ?? undefined,
-          quoted_tweet_id: tweetData.quoted_tweet_id != null ? Number(tweetData.quoted_tweet_id) : undefined,
-          conversation_id: tweetData.conversation_id != null ? Number(tweetData.conversation_id) : undefined,
+          quoted_tweet_id: tweetData.quoted_tweet_id != null ? String(tweetData.quoted_tweet_id) : undefined,
+          conversation_id: tweetData.conversation_id != null ? String(tweetData.conversation_id) : undefined,
         };
 
         embeddingItems.push({

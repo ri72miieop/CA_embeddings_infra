@@ -12,6 +12,17 @@ export interface ProcessedTweetRecord {
     has_quotes: boolean;
     is_truncated: boolean;
     character_difference: number;
+    account_id?: string;
+    username?: string;
+    account_display_name?: string;
+    created_at?: string;
+    retweet_count?: number;
+    favorite_count?: number;
+    reply_to_tweet_id?: string;
+    reply_to_user_id?: string;
+    reply_to_username?: string;
+    quoted_tweet_id?: string;
+    conversation_id?: string;
   };
 }
 
