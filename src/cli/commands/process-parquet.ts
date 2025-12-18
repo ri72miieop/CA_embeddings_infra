@@ -17,6 +17,8 @@ import { BatchFileManager, type BatchManagerOptions, type BatchRecord } from '..
 import { confirmDeepInfraUsage, confirmProcessExistingBatchFiles, displayBatchInfo } from '../utils/user-confirmation.js';
 import { BatchProgressDisplay } from '../utils/batch-progress-display.js';
 import { MissingQuotedTweetsLogger } from '../utils/missing-quoted-tweets-logger.js';
+import { QdrantVectorStore } from '../../stores/qdrant-vector-store.js';
+import { appConfig } from '../../config/index.js';
 
 interface ProcessParquetOptions {
   file: string;
@@ -46,6 +48,8 @@ interface ProcessParquetOptions {
   skipConfirmation?: boolean;
   manifestSaveInterval?: string;
   disableProgressUi?: boolean;
+  /** Skip checking Qdrant for existing records - useful when you know all records need processing */
+  skipQdrantCheck?: boolean;
 }
 
 interface ParquetRecord {
@@ -62,6 +66,55 @@ interface ColumnChunk {
   [columnName: string]: any[];
 }
 
+/**
+ * Load all existing keys from Qdrant vector store
+ * Uses efficient scrollPointIds() which only retrieves IDs without vectors
+ */
+async function loadExistingQdrantKeys(spinner: ReturnType<typeof ora>): Promise<Set<string>> {
+  const existingKeys = new Set<string>();
+
+  try {
+    spinner.text = 'Connecting to Qdrant to check for existing records...';
+
+    const vectorStore = new QdrantVectorStore(appConfig.database);
+    await vectorStore.initialize();
+
+    // Get total count first
+    const totalCount = await vectorStore.getPointsCount();
+
+    if (totalCount === 0) {
+      spinner.text = 'Qdrant collection is empty, no existing records to skip';
+      await vectorStore.close();
+      return existingKeys;
+    }
+
+    spinner.text = `Loading ${totalCount.toLocaleString()} existing keys from Qdrant...`;
+
+    let loadedCount = 0;
+    const batchSize = 10000;
+
+    for await (const batch of vectorStore.scrollPointIds(batchSize, (count) => {
+      spinner.text = `Loading existing keys from Qdrant: ${count.toLocaleString()}/${totalCount.toLocaleString()}`;
+    })) {
+      for (const point of batch) {
+        existingKeys.add(point.key);
+      }
+      loadedCount += batch.length;
+    }
+
+    await vectorStore.close();
+
+    spinner.succeed(`Loaded ${existingKeys.size.toLocaleString()} existing keys from Qdrant`);
+    return existingKeys;
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    spinner.warn(`Could not load existing Qdrant keys: ${errorMessage}`);
+    console.log(chalk.yellow('  ℹ️  Proceeding without Qdrant duplicate check - some records may already exist'));
+    return existingKeys;
+  }
+}
+
 async function processParquetWithBatchFiles(
   options: ProcessParquetOptions,
   client: CA_EmbedClient,
@@ -69,7 +122,8 @@ async function processParquetWithBatchFiles(
   batchSize: number,
   parallelCount: number,
   maxRecords: number | undefined,
-  maxTextLength: number
+  maxTextLength: number,
+  existingQdrantKeys?: Set<string>
 ): Promise<void> {
   const spinner = ora('Initializing batch file manager...').start();
 
@@ -87,7 +141,8 @@ async function processParquetWithBatchFiles(
     processConversationContext: !options.noContext,
     batchSize,
     reprocessExisting: options.reprocessExisting,
-    maxRecords
+    maxRecords,
+    existingQdrantKeys
   };
 
   const batchManager = new BatchFileManager(batchManagerOptions);
@@ -711,7 +766,19 @@ async function processParquetStreaming(
           has_context: false,
           has_quotes: quotesIncluded,
           is_truncated: processedText.endsWith('...'),
-          character_difference: processedText.length - text.length
+          character_difference: processedText.length - text.length,
+          // Tweet metadata fields from parquet (use != null to preserve zero values)
+          account_id: record.account_id != null ? String(record.account_id) : undefined,
+          username: record.username ?? undefined,
+          account_display_name: record.account_display_name ?? undefined,
+          created_at: record.created_at ?? undefined,
+          retweet_count: record.retweet_count != null ? Number(record.retweet_count) : undefined,
+          favorite_count: record.favorite_count != null ? Number(record.favorite_count) : undefined,
+          reply_to_tweet_id: record.reply_to_tweet_id != null ? String(record.reply_to_tweet_id) : undefined,
+          reply_to_user_id: record.reply_to_user_id != null ? String(record.reply_to_user_id) : undefined,
+          reply_to_username: record.reply_to_username ?? undefined,
+          quoted_tweet_id: record.quoted_tweet_id != null ? String(record.quoted_tweet_id) : undefined,
+          conversation_id: record.conversation_id != null ? String(record.conversation_id) : undefined,
         }
       };
 
@@ -1274,6 +1341,7 @@ export async function processParquetCommand(options: ProcessParquetOptions) {
               options.batchFileDir = batchDir;
             }
 
+            // Note: Existing batch files don't need Qdrant key checking - the manifest tracks progress
             await processParquetWithBatchFiles(
               options,
               client,
@@ -1281,7 +1349,8 @@ export async function processParquetCommand(options: ProcessParquetOptions) {
               batchSize,
               parallelCount,
               maxRecords,
-              maxTextLength
+              maxTextLength,
+              undefined // No Qdrant keys needed for existing batches
             );
             return;
           } else {
@@ -1358,6 +1427,14 @@ export async function processParquetCommand(options: ProcessParquetOptions) {
 
     if (useBatchFiles) {
       // No existing batch files, proceed with normal batch file processing
+      // Load existing Qdrant keys to skip records that already exist (unless skip flag is set)
+      let existingQdrantKeys: Set<string> | undefined;
+      if (!options.skipQdrantCheck) {
+        existingQdrantKeys = await loadExistingQdrantKeys(spinner);
+      } else {
+        console.log(chalk.gray('⏭️  Skipping Qdrant duplicate check (--skip-qdrant-check flag)'));
+      }
+
       await processParquetWithBatchFiles(
         options,
         client,
@@ -1365,7 +1442,8 @@ export async function processParquetCommand(options: ProcessParquetOptions) {
         batchSize,
         parallelCount,
         maxRecords,
-        maxTextLength
+        maxTextLength,
+        existingQdrantKeys
       );
     } else {
       // Use legacy streaming approach

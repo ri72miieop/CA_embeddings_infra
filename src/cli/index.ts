@@ -44,6 +44,7 @@ program
   .option('--skip-confirmation', 'Skip user confirmation for sending data to DeepInfra', false)
   .option('--manifest-save-interval <ms>', 'Milliseconds between manifest saves (default: 30000, min: 5000)', '30000')
   .option('--disable-progress-ui', 'Disable live progress UI for maximum performance', false)
+  .option('--skip-qdrant-check', 'Skip checking Qdrant for existing records (faster startup for fresh processing)', false)
   .action(processParquetCommand);
 
 program
