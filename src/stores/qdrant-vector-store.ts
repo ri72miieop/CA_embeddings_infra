@@ -133,17 +133,13 @@ export class QdrantVectorStore implements IVectorStore {
 
       // Convert embeddings to Qdrant points format
       const points = embeddings.map((emb, index) => {
-        // Convert string key to numeric ID for Qdrant (same as exists method)
-        let numericId: number;
-        try {
-          numericId = Number(BigInt(emb.key));
-        } catch (e) {
-          // Fallback for non-numeric keys
-          numericId = Number(emb.key);
-        }
-        
+        // Use string ID for Qdrant to preserve precision for large tweet IDs (19+ digits)
+        // Number.MAX_SAFE_INTEGER is only ~16 digits, causing precision loss for tweet IDs
+        // Qdrant accepts string IDs which avoids this issue entirely
+        const stringId = emb.key;
+
         return {
-          id: numericId, // Use numeric ID for Qdrant
+          id: stringId, // Use string ID for Qdrant to preserve precision
           vector: Array.from(emb.vector), // Qdrant expects array, not Float32Array
           payload: {
             key: emb.key, // Keep original string key in payload
@@ -184,14 +180,14 @@ export class QdrantVectorStore implements IVectorStore {
     });
 
     try {
-      // Convert key to numeric ID (same format used for insertion)
-      const numericId = Number(BigInt(key));
+      // Use string ID (same format used for insertion) to preserve precision for large tweet IDs
+      const stringId = key;
 
-      contextLogger.debug({ key, numericId }, 'Checking if vector exists');
+      contextLogger.debug({ key }, 'Checking if vector exists');
 
       // Retrieve the point without payload or vector data for efficiency
       const result = await this.client!.retrieve(this.collectionName, {
-        ids: [numericId],
+        ids: [stringId],
         with_payload: false,
         with_vector: false
       });
