@@ -863,7 +863,17 @@ Example incremental testing:
 | `has_quotes` | boolean | Whether text contains quotes | `match.value` (exact) |
 | `is_truncated` | boolean | Whether text was truncated | `match.value` (exact) |
 | `character_difference` | number | Char count difference | `range` |
-| `created_at` | datetime | Creation timestamp | `range` (datetime) |
+| `account_id` | string | Twitter user ID | `match.value` (exact) |
+| `username` | string | Twitter username | `match.value` (exact) or `match.text` |
+| `account_display_name` | string | Twitter display name | `match.text` (substring) |
+| `created_at` | string | Tweet creation timestamp | `range` (datetime) |
+| `retweet_count` | number | Number of retweets | `range` |
+| `favorite_count` | number | Number of favorites/likes | `range` |
+| `reply_to_tweet_id` | string | ID of tweet being replied to | `match.value` (exact) |
+| `reply_to_user_id` | string | User ID being replied to | `match.value` (exact) |
+| `reply_to_username` | string | Username being replied to | `match.value` (exact) |
+| `quoted_tweet_id` | string | ID of quoted tweet | `match.value` (exact) |
+| `conversation_id` | string | Conversation thread ID | `match.value` (exact) |
 
 ---
 
