@@ -32,6 +32,24 @@ const TWEET_IDS_FILE = join(process.cwd(), 'data', 'tweet-ids-from-supabase.txt'
 // Ensure data directory exists
 await mkdir(dirname(TWEET_IDS_FILE), { recursive: true });
 
+// Batching configuration
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '1000', 10);
+const FLUSH_TIMEOUT_MS = parseInt(process.env.FLUSH_TIMEOUT_MS || '30000', 10);
+const MAX_RETRIES = 2;
+const RETRY_BACKOFF_MS = [1000, 2000];
+
+// Buffered tweet interface
+interface BufferedTweet {
+  tweetId: string;
+  fullText: string;
+  tweetData: any;
+}
+
+// Tweet buffer and timer
+let tweetBuffer: BufferedTweet[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let isShuttingDown = false;
+
 // Statistics tracking
 let stats = {
   processed: 0,
@@ -40,10 +58,11 @@ let stats = {
   startTime: Date.now()
 };
 
-console.log('🚀 Starting Supabase tweets listener with embedding generation...');
+console.log('🚀 Starting Supabase tweets listener with batching...');
 console.log(`📡 Connected to: ${supabaseUrl}`);
 console.log(`🔗 Embedding service: ${embeddingServiceUrl}`);
 console.log(`📝 Saving tweet IDs to: ${TWEET_IDS_FILE}`);
+console.log(`📦 Batch size: ${BATCH_SIZE}, Flush timeout: ${FLUSH_TIMEOUT_MS}ms`);
 console.log('👂 Listening for INSERT events on tweets table...\n');
 
 /**
@@ -113,22 +132,20 @@ async function fetchQuotedTweets(tweetId: string): Promise<QuotedTweetData[]> {
 }
 
 /**
- * Generate and store embedding for a tweet
+ * Generate and store embeddings for a batch of items
  */
-async function generateAndStoreEmbedding(
-  key: string,
-  content: string,
-  metadata: Record<string, any>
-): Promise<void> {
+async function generateAndStoreEmbeddingsBatch(
+  items: Array<{ key: string; content: string; metadata: Record<string, any> }>
+): Promise<any> {
   const requestBody = {
-    items: [{
-      key,
-      content,
+    items: items.map(item => ({
+      key: item.key,
+      content: item.content,
       contentType: 'text',
-      metadata: metadata
-    }]
+      metadata: item.metadata
+    }))
   };
-  
+
   const response = await fetch(`${embeddingServiceUrl}/embeddings/generate-and-store`, {
     method: 'POST',
     headers: {
@@ -137,121 +154,198 @@ async function generateAndStoreEmbedding(
     },
     body: JSON.stringify(requestBody)
   });
-  
+
   if (!response.ok) {
     const errorText = await response.text();
     console.error(`❌ Response body:`, errorText);
-    console.error(`❌ Response headers:`, JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
     throw new Error(`Embedding API error (${response.status}): ${errorText}`);
   }
-  
-  const result = await response.json();
-  console.log(`✅ API response:`, JSON.stringify(result, null, 2));
+
+  return await response.json();
 }
 
 /**
- * Process a single tweet: check existence, fetch quotes, generate embedding
+ * Sleep utility for retry backoff
  */
-async function processTweet(tweetData: any): Promise<void> {
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Buffer a tweet for batch processing
+ */
+function bufferTweet(tweetData: any): void {
   const tweetId = String(tweetData.tweet_id || tweetData.id);
   const fullText = tweetData.full_text || tweetData.text || '';
-  
+
   if (!tweetId || !fullText) {
-    console.warn('⚠️  Tweet missing ID or text, skipping\n');
+    console.warn('⚠️  Tweet missing ID or text, skipping');
     stats.skipped++;
     return;
   }
-  
-  console.log('✨ New tweet inserted:');
-  console.log('─'.repeat(80));
-  console.log(`Tweet ID: ${tweetId}`);
-  console.log(`Text: ${fullText.substring(0, 100)}${fullText.length > 100 ? '...' : ''}`);
-  console.log('─'.repeat(80));
-  
-  try {
-    // Step 1: Check if tweet already exists in vector store
-    console.log(`🔍 Checking if tweet ${tweetId} already exists...`);
-    const exists = await checkTweetExists(tweetId);
-    
-    if (exists) {
-      console.log(`⏭️  Tweet ${tweetId} already exists in vector store, skipping\n`);
-      stats.skipped++;
-      await appendFile(TWEET_IDS_FILE, `${tweetId} (skipped: already exists)\n`, 'utf-8');
-      return;
-    }
-    
-    console.log(`✅ Tweet ${tweetId} is new, processing...`);
-    
-    // Step 2: Fetch quoted tweets if any
-    console.log(`📥 Fetching quoted tweets for ${tweetId}...`);
-    const quotedTweets = await fetchQuotedTweets(tweetId);
-    
-    if (quotedTweets.length > 0) {
-      console.log(`📑 Found ${quotedTweets.length} quoted tweet(s)`);
-    } else {
-      console.log(`📑 No quoted tweets found`);
-    }
-    
-    // Step 3: Process text using shared utility
-    // Note: Currently only handles first quoted tweet, could be extended for multiple
-    const quotedText = quotedTweets.length > 0 && quotedTweets[0] ? quotedTweets[0].full_text : null;
-    
-    console.log(`🔧 Processing tweet text...`);
-    const processed = processTweetText(fullText, quotedText, 1024);
-    
-    console.log(`📝 Processed text: ${processed.processedText.substring(0, 100)}${processed.processedText.length > 100 ? '...' : ''}`);
-    console.log(`   Quotes included: ${processed.quotesIncluded}`);
-    console.log(`   Truncated: ${processed.truncated}`);
-    console.log(`   Character count: ${processed.charactersUsed}`);
-    
-    // Skip if processed text is empty (after cleaning)
-    if (!processed.processedText || processed.processedText.trim().length === 0) {
-      console.warn(`⚠️  Tweet ${tweetId} has empty text after processing, skipping\n`);
-      stats.skipped++;
-      await appendFile(TWEET_IDS_FILE, `${tweetId} (skipped: empty after processing)\n`, 'utf-8');
-      return;
-    }
-    
-    // Step 4: Prepare metadata
-    const metadata: Record<string, any> = {
-      source: 'supabase_realtime',
-      original_text: fullText,
-      has_quotes: processed.quotesIncluded,
-      is_truncated: processed.truncated,
-      character_difference: processed.charactersUsed - fullText.length,
-      text: processed.processedText
-    };
-    
-    //if (tweetData?.username) {
-    //  metadata.username = tweetData.username;
-    //}
-    //if (tweetData?.account_display_name) {
-    //  metadata.account_display_name = tweetData.account_display_name;
-    //}
-    
-    // Step 5: Generate and store embedding
-    console.log(`🧠 Generating embedding for tweet ${tweetId}...`);
-    await generateAndStoreEmbedding(tweetId, processed.processedText, metadata);
-    
-    console.log(`✅ Successfully generated and stored embedding for tweet ${tweetId}`);
-    
-    // Step 6: Save to file
-    await appendFile(TWEET_IDS_FILE, `${tweetId}\n`, 'utf-8');
-    console.log(`📝 Saved tweet ID to file`);
-    
-    stats.processed++;
-    
-    // Print statistics
-    const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
-    const rate = (stats.processed / (Date.now() - stats.startTime) * 1000 * 60).toFixed(2);
-    console.log(`📊 Stats: ${stats.processed} processed, ${stats.skipped} skipped, ${stats.failed} failed | ${elapsed}s | ${rate} tweets/min\n`);
-    
-  } catch (error) {
-    console.error(`❌ Error processing tweet ${tweetId}:`, error);
-    stats.failed++;
-    await appendFile(TWEET_IDS_FILE, `${tweetId} (failed: ${error instanceof Error ? error.message : 'unknown error'})\n`, 'utf-8');
-    console.log('');
+
+  console.log(`📥 Buffering tweet ${tweetId} (buffer: ${tweetBuffer.length + 1}/${BATCH_SIZE})`);
+  tweetBuffer.push({ tweetId, fullText, tweetData });
+
+  // Reset flush timer on each new tweet
+  resetFlushTimer();
+
+  // If buffer is full, flush immediately
+  if (tweetBuffer.length >= BATCH_SIZE) {
+    flushBatchWithRetry();
   }
+}
+
+/**
+ * Reset the flush timer
+ */
+function resetFlushTimer(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+  }
+  flushTimer = setTimeout(() => {
+    if (tweetBuffer.length > 0 && !isShuttingDown) {
+      console.log(`⏰ Flush timeout reached, processing ${tweetBuffer.length} buffered tweets`);
+      flushBatchWithRetry();
+    }
+  }, FLUSH_TIMEOUT_MS);
+}
+
+/**
+ * Flush batch with retry logic
+ */
+async function flushBatchWithRetry(): Promise<void> {
+  if (tweetBuffer.length === 0) return;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await flushBatch();
+      return; // Success
+    } catch (error) {
+      if (attempt < MAX_RETRIES) {
+        const backoffMs = RETRY_BACKOFF_MS[attempt] ?? 1000;
+        console.warn(`⚠️  Batch failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${backoffMs}ms...`);
+        await sleep(backoffMs);
+      } else {
+        console.error(`❌ Batch failed after ${MAX_RETRIES + 1} attempts:`, error instanceof Error ? error.message : error);
+        // Mark all tweets in current batch as failed
+        for (const { tweetId } of tweetBuffer) {
+          await appendFile(TWEET_IDS_FILE, `${tweetId} (failed: batch error after retries)\n`, 'utf-8');
+        }
+        stats.failed += tweetBuffer.length;
+        tweetBuffer = [];
+      }
+    }
+  }
+}
+
+/**
+ * Process all buffered tweets as a batch
+ */
+async function flushBatch(): Promise<void> {
+  // Clear the flush timer
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+
+  // Take all tweets from buffer (swap with empty array)
+  const batch = tweetBuffer;
+  tweetBuffer = [];
+
+  if (batch.length === 0) return;
+
+  console.log('─'.repeat(80));
+  console.log(`📦 Processing batch of ${batch.length} tweets`);
+  console.log('─'.repeat(80));
+
+  // Step 1: Prepare embedding items (check existence, fetch quotes, process text)
+  const embeddingItems: Array<{ key: string; content: string; metadata: Record<string, any> }> = [];
+  const processedTweetIds: string[] = [];
+
+  for (const { tweetId, fullText, tweetData } of batch) {
+    try {
+      // Check if tweet already exists
+      const exists = await checkTweetExists(tweetId);
+      if (exists) {
+        console.log(`⏭️  Tweet ${tweetId} already exists, skipping`);
+        stats.skipped++;
+        await appendFile(TWEET_IDS_FILE, `${tweetId} (skipped: already exists)\n`, 'utf-8');
+        continue;
+      }
+
+      // Fetch quoted tweets
+      const quotedTweets = await fetchQuotedTweets(tweetId);
+      const quotedText = quotedTweets.length > 0 && quotedTweets[0] ? quotedTweets[0].full_text : null;
+
+      // Process text
+      const processed = processTweetText(fullText, quotedText, 1024);
+
+      // Skip if processed text is empty
+      if (!processed.processedText || processed.processedText.trim().length === 0) {
+        console.log(`⏭️  Tweet ${tweetId} has empty text after processing, skipping`);
+        stats.skipped++;
+        await appendFile(TWEET_IDS_FILE, `${tweetId} (skipped: empty after processing)\n`, 'utf-8');
+        continue;
+      }
+
+      // Prepare metadata (matching schema from batch-file-manager.ts)
+      const metadata: Record<string, any> = {
+        source: 'supabase_realtime',
+        original_text: fullText,
+        has_context: false,
+        has_quotes: processed.quotesIncluded,
+        is_truncated: processed.truncated,
+        character_difference: processed.charactersUsed - fullText.length,
+        text: processed.processedText,
+        // Tweet metadata fields from Supabase (use != null to preserve zero values)
+        account_id: tweetData.account_id != null ? Number(tweetData.account_id) : undefined,
+        username: tweetData.username ?? undefined,
+        account_display_name: tweetData.account_display_name ?? undefined,
+        created_at: tweetData.created_at ?? undefined,
+        retweet_count: tweetData.retweet_count != null ? Number(tweetData.retweet_count) : undefined,
+        favorite_count: tweetData.favorite_count != null ? Number(tweetData.favorite_count) : undefined,
+        reply_to_tweet_id: tweetData.reply_to_tweet_id != null ? Number(tweetData.reply_to_tweet_id) : undefined,
+        reply_to_user_id: tweetData.reply_to_user_id != null ? Number(tweetData.reply_to_user_id) : undefined,
+        reply_to_username: tweetData.reply_to_username ?? undefined,
+        quoted_tweet_id: tweetData.quoted_tweet_id != null ? Number(tweetData.quoted_tweet_id) : undefined,
+        conversation_id: tweetData.conversation_id != null ? Number(tweetData.conversation_id) : undefined,
+      };
+
+      embeddingItems.push({
+        key: tweetId,
+        content: processed.processedText,
+        metadata
+      });
+      processedTweetIds.push(tweetId);
+    } catch (error) {
+      console.warn(`⚠️  Error preparing tweet ${tweetId}:`, error instanceof Error ? error.message : error);
+      stats.failed++;
+      await appendFile(TWEET_IDS_FILE, `${tweetId} (failed: ${error instanceof Error ? error.message : 'unknown error'})\n`, 'utf-8');
+    }
+  }
+
+  if (embeddingItems.length === 0) {
+    console.log('📭 No tweets to process after filtering');
+    return;
+  }
+
+  // Step 2: Generate and store embeddings in batch
+  console.log(`🧠 Generating embeddings for ${embeddingItems.length} tweets...`);
+  const result = await generateAndStoreEmbeddingsBatch(embeddingItems);
+  console.log(`✅ Batch API response: ${JSON.stringify(result)}`);
+
+  // Step 3: Save processed tweet IDs to file
+  for (const tweetId of processedTweetIds) {
+    await appendFile(TWEET_IDS_FILE, `${tweetId}\n`, 'utf-8');
+  }
+
+  stats.processed += embeddingItems.length;
+
+  // Print statistics
+  const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
+  const rate = (stats.processed / (Date.now() - stats.startTime) * 1000 * 60).toFixed(2);
+  console.log(`📊 Batch complete: +${embeddingItems.length} | Total: ${stats.processed} processed, ${stats.skipped} skipped, ${stats.failed} failed | ${elapsed}s | ${rate} tweets/min\n`);
 }
 
 // Subscribe to INSERT events on the tweets table
@@ -264,9 +358,9 @@ const channel = supabase
       schema: 'public',
       table: 'tweets'
     },
-    async (payload) => {
-      if (payload.new) {
-        await processTweet(payload.new);
+    (payload) => {
+      if (payload.new && !isShuttingDown) {
+        bufferTweet(payload.new);
       }
     }
   )
@@ -285,8 +379,25 @@ const channel = supabase
 
 // Handle graceful shutdown
 async function shutdown() {
+  isShuttingDown = true;
   console.log('\n\n🛑 Shutting down...');
-  
+
+  // Clear flush timer
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+
+  // Process remaining buffered tweets before shutdown
+  if (tweetBuffer.length > 0) {
+    console.log(`📦 Processing ${tweetBuffer.length} remaining buffered tweets...`);
+    try {
+      await flushBatchWithRetry();
+    } catch (error) {
+      console.error('❌ Failed to process remaining tweets:', error instanceof Error ? error.message : error);
+    }
+  }
+
   // Print final statistics
   const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
   console.log('📊 Final Statistics:');
@@ -294,7 +405,7 @@ async function shutdown() {
   console.log(`   Skipped: ${stats.skipped}`);
   console.log(`   Failed: ${stats.failed}`);
   console.log(`   Total time: ${elapsed}s`);
-  
+
   await supabase.removeChannel(channel);
   console.log('👋 Disconnected from Supabase');
   process.exit(0);
