@@ -49,9 +49,7 @@ const envSchema = z.object({
   QUEUE_MAX_FILES_RETAINED: z.string().default('100').transform(Number),
   
   // SQLite Queue settings
-  QUEUE_PARQUET_EXPORT_THRESHOLD: z.string().default('50000').transform(Number),
   QUEUE_SQLITE_DB_PATH: z.string().optional(),
-  QUEUE_PARQUET_EXPORT_DIR: z.string().optional(),
   
   // Supabase Listener settings
   SUPABASE_LISTENER_ENABLED: z.string().default('false').transform(val => val === 'true'),
@@ -125,9 +123,7 @@ export const appConfig: AppConfig = {
       maxParallelFiles: env.QUEUE_MAX_PARALLEL_FILES,
       insertChunkSize: env.QUEUE_INSERT_CHUNK_SIZE,
       maxFilesRetained: env.QUEUE_MAX_FILES_RETAINED,
-      parquetExportThreshold: env.QUEUE_PARQUET_EXPORT_THRESHOLD,
       sqliteDbPath: env.QUEUE_SQLITE_DB_PATH,
-      parquetExportDir: env.QUEUE_PARQUET_EXPORT_DIR,
     },
   },
   supabase: env.SUPABASE_URL ? {

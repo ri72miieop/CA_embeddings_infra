@@ -91,15 +91,12 @@ export async function createServer() {
       {
         processIntervalMs: 1000,
         maxRetries: 3,
-        insertChunkSize: appConfig.embeddingGeneration.queue?.insertChunkSize || 1000,
-        parquetExportThreshold: appConfig.embeddingGeneration.queue?.parquetExportThreshold || 50_000,
-        parquetExportDir: appConfig.embeddingGeneration.queue?.parquetExportDir
+        insertChunkSize: appConfig.embeddingGeneration.queue?.insertChunkSize || 1000
       }
     );
     await embeddingWriteQueue.initialize();
     logger.info({
-      dbPath: queueDbPath,
-      parquetExportThreshold: appConfig.embeddingGeneration.queue?.parquetExportThreshold || 50_000
+      dbPath: queueDbPath
     }, 'SQLite embedding write queue initialized');
   }
 
@@ -186,10 +183,9 @@ export async function createServer() {
         pending: stats.queue.pending,
         processing: stats.queue.processing,
         failed: stats.queue.failed,
-        completed: stats.queue.completed,
-        exported: stats.queue.exported
+        completed: stats.queue.completed
       }, 'Final queue stats before shutdown');
-      
+
       await embeddingWriteQueue.shutdown();
       logger.info('Write queue shutdown complete');
     }

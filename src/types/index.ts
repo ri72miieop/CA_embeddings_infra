@@ -156,9 +156,7 @@ export interface EmbeddingGenerationConfig {
     maxParallelFiles?: number;      // Keep for batch processing (deprecated for SQLite queue)
     insertChunkSize?: number;        // Chunk size for vector store inserts
     maxFilesRetained?: number;       // Deprecated for SQLite queue
-    parquetExportThreshold?: number; // New: records per Parquet file
-    sqliteDbPath?: string;           // New: SQLite database path
-    parquetExportDir?: string;       // New: Parquet export directory
+    sqliteDbPath?: string;           // SQLite database path
   };
 }
 

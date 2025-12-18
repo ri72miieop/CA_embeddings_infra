@@ -2,7 +2,7 @@ import { SqliteEmbeddingQueue } from './sqlite-embedding-queue.js';
 import type { IVectorStore } from '../interfaces/vector-store.interface.js';
 import { createContextLogger } from '../observability/logger.js';
 import type { EmbeddingVector } from '../types/index.js';
-import { queueDepth, queueFileCount, parquetBatchCount } from '../observability/metrics.js';
+import { queueDepth, queueFileCount } from '../observability/metrics.js';
 import path from 'path';
 
 /**
@@ -21,20 +21,16 @@ export class EmbeddingWriteQueueManager {
       processIntervalMs?: number;
       maxRetries?: number;
       insertChunkSize?: number;
-      parquetExportThreshold?: number;
-      parquetExportDir?: string;
     } = {}
   ) {
     // If path doesn't end with .db, assume it's a data directory and append the db file name
-    const dbPath = dbPathOrDataDir.endsWith('.db') 
-      ? dbPathOrDataDir 
+    const dbPath = dbPathOrDataDir.endsWith('.db')
+      ? dbPathOrDataDir
       : path.join(dbPathOrDataDir, 'embedding-queue.db');
-    
+
     this.queue = new SqliteEmbeddingQueue(
       dbPath,
       embeddingService,
-      options.parquetExportThreshold || 50_000,
-      options.parquetExportDir,
       options.processIntervalMs || 1000,
       options.insertChunkSize || 1000,
       options.maxRetries || 3
@@ -43,15 +39,15 @@ export class EmbeddingWriteQueueManager {
 
   async initialize(): Promise<void> {
     await this.queue.initialize();
-    
+
     // Set up periodic metrics refresh (every 30 seconds)
     this.metricsInterval = setInterval(async () => {
       await this.updateQueueMetrics();
     }, 30000);
-    
+
     // Initial metrics update
     await this.updateQueueMetrics();
-    
+
     this.logger.info('Embedding write queue manager initialized');
   }
 
@@ -61,7 +57,7 @@ export class EmbeddingWriteQueueManager {
    */
   async queueEmbeddings(embeddings: EmbeddingVector[], correlationId?: string): Promise<void> {
     await this.queue.enqueue(embeddings, correlationId);
-    
+
     // Update metrics after enqueueing
     await this.updateQueueMetrics();
   }
@@ -75,11 +71,6 @@ export class EmbeddingWriteQueueManager {
       processing: number;
       failed: number;
       completed: number;
-      exported: number;
-    };
-    parquet: {
-      totalBatches: number;
-      nextExportAt: number;
     };
   }> {
     const stats = this.queue.getStats();
@@ -92,21 +83,9 @@ export class EmbeddingWriteQueueManager {
         pending: stats.pending,
         processing: stats.processing,
         failed: stats.failed,
-        completed: stats.completed,
-        exported: stats.exported
-      },
-      parquet: {
-        totalBatches: stats.parquetBatches,
-        nextExportAt: stats.nextExportAt
+        completed: stats.completed
       }
     };
-  }
-
-  /**
-   * Get detailed information about Parquet export batches
-   */
-  async getParquetBatches() {
-    return await this.queue.getParquetBatches();
   }
 
   /**
@@ -126,7 +105,7 @@ export class EmbeddingWriteQueueManager {
       clearInterval(this.metricsInterval);
       this.metricsInterval = null;
     }
-    
+
     await this.queue.shutdown();
     this.queue.close();
     this.logger.info('Embedding write queue manager shutdown complete');
@@ -170,19 +149,15 @@ export class EmbeddingWriteQueueManager {
   private async updateQueueMetrics(): Promise<void> {
     try {
       const stats = this.queue.getStats();
-      
+
       // Update queue depth (total pending items)
       queueDepth.set(stats.pending);
-      
+
       // Update item counts by status
       queueFileCount.set({ status: 'pending' }, stats.pending);
       queueFileCount.set({ status: 'processing' }, stats.processing);
       queueFileCount.set({ status: 'failed' }, stats.failed);
       queueFileCount.set({ status: 'completed' }, stats.completed);
-      queueFileCount.set({ status: 'exported' }, stats.exported);
-      
-      // Update Parquet batch count
-      parquetBatchCount.set(stats.parquetBatches);
     } catch (error) {
       // Log but don't throw - metrics update failures shouldn't break operations
       this.logger.debug({ error }, 'Failed to update queue metrics');
