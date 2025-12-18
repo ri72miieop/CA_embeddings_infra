@@ -22,6 +22,17 @@ export interface BatchRecord {
       is_truncated: boolean;
       character_difference: number;
       text: string;
+      account_id?: string;
+      username?: string;
+      account_display_name?: string;
+      created_at?: string;
+      retweet_count?: number;
+      favorite_count?: number;
+      reply_to_tweet_id?: string;
+      reply_to_user_id?: string;
+      reply_to_username?: string;
+      quoted_tweet_id?: string;
+      conversation_id?: string;
     };
   };
 }
@@ -71,6 +82,8 @@ export interface BatchManagerOptions {
   batchSize: number;
   reprocessExisting: boolean;
   maxRecords?: number;
+  /** Set of keys that already exist in Qdrant - these will be skipped during batch creation */
+  existingQdrantKeys?: Set<string>;
 }
 
 export class BatchFileManager {
@@ -249,6 +262,11 @@ export class BatchFileManager {
     const initialMem = process.memoryUsage();
     console.log(chalk.gray(`Initial memory: ${Math.round(initialMem.heapUsed / 1024 / 1024)}MB heap, ${Math.round(initialMem.rss / 1024 / 1024)}MB total`));
 
+    // Log Qdrant key skip info
+    if (this.options.existingQdrantKeys && this.options.existingQdrantKeys.size > 0) {
+      console.log(chalk.cyan(`🔍 Will skip ${this.options.existingQdrantKeys.size.toLocaleString()} keys already present in Qdrant`));
+    }
+
     const file = await asyncBufferFromFile(this.options.sourceFile);
 
     console.log(chalk.cyan(`Loading and processing records from parquet file...`));
@@ -258,6 +276,7 @@ export class BatchFileManager {
     let processedIds: ProcessedIdIndex = {};
     let totalProcessed = 0;
     let missingQuotedCount = 0;
+    let skippedExistingInQdrant = 0;
 
     // Use efficient row-limited loading if maxRecords is specified
     let allRecords: any[] = [];
@@ -332,6 +351,12 @@ export class BatchFileManager {
           continue;
         }
 
+        // Skip if already exists in Qdrant
+        if (this.options.existingQdrantKeys?.has(key)) {
+          skippedExistingInQdrant++;
+          continue;
+        }
+
         // Check if this tweet has a quoted tweet
         let quotedTweet = null;
         if (record.quoted_tweet_id) {
@@ -359,7 +384,19 @@ export class BatchFileManager {
             has_quotes: processingResult.quotesIncluded,
             is_truncated: processingResult.truncated,
             character_difference: processedText.length - text.length,
-            text:processedText.trim()
+            text: processedText.trim(),
+            // Tweet metadata fields from parquet (use != null to preserve zero values)
+            account_id: record.account_id != null ? String(record.account_id) : undefined,
+            username: record.username ?? undefined,
+            account_display_name: record.account_display_name ?? undefined,
+            created_at: record.created_at ?? undefined,
+            retweet_count: record.retweet_count != null ? Number(record.retweet_count) : undefined,
+            favorite_count: record.favorite_count != null ? Number(record.favorite_count) : undefined,
+            reply_to_tweet_id: record.reply_to_tweet_id != null ? String(record.reply_to_tweet_id) : undefined,
+            reply_to_user_id: record.reply_to_user_id != null ? String(record.reply_to_user_id) : undefined,
+            reply_to_username: record.reply_to_username ?? undefined,
+            quoted_tweet_id: record.quoted_tweet_id != null ? String(record.quoted_tweet_id) : undefined,
+            conversation_id: record.conversation_id != null ? String(record.conversation_id) : undefined,
           };
         } catch (error) {
           console.warn(chalk.yellow(`Warning: Failed to process record ${key}: ${error}`));
@@ -474,6 +511,11 @@ export class BatchFileManager {
       }
 
       console.log(chalk.green(`✅ Created ${batchFiles.length} batch files with ${totalProcessed.toLocaleString()} records`));
+
+      // Report skipped records (already in Qdrant)
+      if (skippedExistingInQdrant > 0) {
+        console.log(chalk.cyan(`⏭️  Skipped ${skippedExistingInQdrant.toLocaleString()} records already present in Qdrant`));
+      }
 
       // Report missing quoted tweets
       if (this.missingQuotedLogger.hasMessages()) {
