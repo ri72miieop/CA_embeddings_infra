@@ -12,6 +12,7 @@ A high-performance, scalable embeddings serving solution built with TypeScript a
 - **Type Safe**: Full TypeScript implementation with Zod validation
 - **Containerized**: Docker deployment with multi-stage builds
 - **Scalable Architecture**: Built for distributed systems and horizontal scaling
+- **Cloud Backups**: Export vector store to Cloudflare R2 or Supabase Storage via API
 
 ## 📊 Architecture
 
@@ -190,6 +191,15 @@ GET /metrics             # Prometheus metrics
 | **Rate Limiting** | | |
 | `RATE_LIMIT_MAX` | `100` | Requests per window |
 | `RATE_LIMIT_WINDOW` | `60000` | Rate limit window (ms) |
+| **Cloud Export (R2)** | | |
+| `R2_ACCESS_KEY_ID` | - | Cloudflare R2 access key |
+| `R2_SECRET_ACCESS_KEY` | - | Cloudflare R2 secret key |
+| `R2_ENDPOINT` | - | R2 endpoint URL (e.g., `https://xxx.r2.cloudflarestorage.com`) |
+| `R2_BUCKET` | - | R2 bucket name |
+| **Cloud Export (Supabase)** | | |
+| `SUPABASE_URL` | - | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | - | Supabase service role key (for storage access) |
+| `SUPABASE_STORAGE_BUCKET` | - | Supabase storage bucket name |
 
 ## 🔧 Production Deployment
 
@@ -219,15 +229,55 @@ GET /metrics             # Prometheus metrics
 
 ### Backup & Recovery
 
+**Cloud Export via API**
+
+Export your entire vector store to Cloudflare R2 or Supabase Storage for disaster recovery. Export uses a high-performance Go binary that runs in the background.
+
+**Configuration:**
 ```bash
-# Create backup
-./scripts/backup.sh
+# R2 credentials (for R2 export)
+R2_ACCESS_KEY_ID=your_key
+R2_SECRET_ACCESS_KEY=your_secret
+R2_ENDPOINT=https://xxx.r2.cloudflarestorage.com
+R2_BUCKET=your_bucket
 
-# List available backups
-ls /backups/
+# Supabase credentials (for Supabase export)
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+SUPABASE_STORAGE_BUCKET=your_bucket
+```
 
-# Restore from backup
-./scripts/restore.sh embeddings_backup_20231201_120000.db.gz
+**Start Export** (Protected, requires API key):
+```bash
+# Export to R2
+curl -X POST http://localhost:3000/embeddings/export \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"destination": "r2", "strategy": "parquet-med"}'
+
+# Export to Supabase
+curl -X POST http://localhost:3000/embeddings/export \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"destination": "supabase"}'
+```
+
+**R2 Export Strategies:**
+- `ndjson-gz` - Compressed newline-delimited JSON
+- `parquet-small` - Small parquet chunks
+- `parquet-med` - Medium parquet chunks (default)
+- `parquet-large` - Large parquet chunks
+
+**Check Export Status:**
+```bash
+curl http://localhost:3000/embeddings/export/status \
+  -H "Authorization: Bearer your-api-key"
+```
+
+**Cancel Running Export:**
+```bash
+curl -X DELETE http://localhost:3000/embeddings/export \
+  -H "Authorization: Bearer your-api-key"
 ```
 
 ## 📈 Monitoring & Observability
