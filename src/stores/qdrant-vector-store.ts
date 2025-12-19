@@ -132,17 +132,20 @@ export class QdrantVectorStore implements IVectorStore {
       contextLogger.info('Starting bulk insert operation');
 
       // Convert embeddings to Qdrant points format
+      // Note: Qdrant's TypeScript types don't include bigint, but it works at runtime
+      // We use 'as any' to bypass the type check since BigInt is required for large tweet IDs
       const points = embeddings.map((emb, index) => {
-        // Use string ID for Qdrant to preserve precision for large tweet IDs (19+ digits)
+        // Use BigInt ID for Qdrant to preserve precision for large tweet IDs (19+ digits)
         // Number.MAX_SAFE_INTEGER is only ~16 digits, causing precision loss for tweet IDs
-        // Qdrant accepts string IDs which avoids this issue entirely
-        const stringId = emb.key;
+        // Qdrant accepts BigInt IDs which preserves full precision
+        // Note: String IDs are only valid if they're UUIDs; numeric strings cause "Bad Request"
+        const bigIntId = BigInt(emb.key);
 
         return {
-          id: stringId, // Use string ID for Qdrant to preserve precision
+          id: bigIntId as any, // Use BigInt for Qdrant to preserve precision (type assertion needed)
           vector: Array.from(emb.vector), // Qdrant expects array, not Float32Array
           payload: {
-            key: emb.key, // Keep original string key in payload
+            key: emb.key, // Keep original string key in payload for retrieval
             metadata: emb.metadata || {}, // Keep metadata nested
           },
         };
@@ -180,14 +183,15 @@ export class QdrantVectorStore implements IVectorStore {
     });
 
     try {
-      // Use string ID (same format used for insertion) to preserve precision for large tweet IDs
-      const stringId = key;
+      // Use BigInt ID (same format used for insertion) to preserve precision for large tweet IDs
+      const bigIntId = BigInt(key);
 
       contextLogger.debug({ key }, 'Checking if vector exists');
 
       // Retrieve the point without payload or vector data for efficiency
+      // Note: Qdrant's TypeScript types don't include bigint, but it works at runtime
       const result = await this.client!.retrieve(this.collectionName, {
-        ids: [stringId],
+        ids: [bigIntId as any], // Type assertion needed for BigInt
         with_payload: false,
         with_vector: false
       });
@@ -674,10 +678,14 @@ export class QdrantVectorStore implements IVectorStore {
     try {
       contextLogger.info('Starting bulk delete operation');
 
+      // Convert string keys to BigInt IDs for Qdrant
+      // Note: Qdrant's TypeScript types don't include bigint, but it works at runtime
+      const bigIntIds = keys.map(key => BigInt(key) as any);
+
       // Delete points by IDs
       await this.client!.delete(this.collectionName, {
         wait: true,
-        points: keys,
+        points: bigIntIds,
       });
 
       contextLogger.info('Bulk delete completed successfully');
@@ -726,20 +734,21 @@ export class QdrantVectorStore implements IVectorStore {
         const batch = updates.slice(i, i + BATCH_SIZE);
 
         // Build array of SetPayloadOperation for batchUpdate
-        // Use string IDs to preserve precision for large tweet IDs
-        const operations: Array<{ set_payload: { payload: Record<string, any>; points: string[] } }> = [];
+        // Use BigInt IDs to preserve precision for large tweet IDs
+        // Note: Qdrant's TypeScript types don't include bigint, but it works at runtime
+        const operations: Array<{ set_payload: { payload: Record<string, any>; points: any[] } }> = [];
 
         for (const update of batch) {
-          // Use string ID directly to preserve precision
-          const stringId = update.key;
+          // Use BigInt ID to preserve precision
+          const bigIntId = BigInt(update.key);
 
           operations.push({
             set_payload: {
               payload: {
-                key: update.key, // Preserve original string key
+                key: update.key, // Preserve original string key in payload
                 metadata: update.metadata,
               },
-              points: [stringId],
+              points: [bigIntId as any],
             }
           });
         }
