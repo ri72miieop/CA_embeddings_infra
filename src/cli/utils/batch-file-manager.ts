@@ -307,6 +307,36 @@ export class BatchFileManager {
     const afterLoadMem = process.memoryUsage();
     console.log(chalk.gray(`Loaded ${allRecords.length.toLocaleString()} records into memory - Memory: ${Math.round(afterLoadMem.heapUsed / 1024 / 1024)}MB heap, ${Math.round(afterLoadMem.rss / 1024 / 1024)}MB total`));
 
+    // Validate ID column type to detect precision loss early
+    if (allRecords.length > 0) {
+      const sampleRecord = allRecords[0];
+      const sampleId = sampleRecord[this.options.idColumn];
+
+      if (sampleId !== undefined && sampleId !== null) {
+        if (typeof sampleId === 'number') {
+          if (!Number.isSafeInteger(sampleId)) {
+            throw new Error(
+              `CRITICAL: ID column "${this.options.idColumn}" is a Number exceeding MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+              `Precision loss has already occurred. Value: ${sampleId}. ` +
+              `Ensure your parquet library returns BigInt for int64 columns.`
+            );
+          }
+          console.warn(chalk.yellow(
+            `⚠️  ID column "${this.options.idColumn}" is Number type (value: ${sampleId}). ` +
+            `Safe for now, but may lose precision for IDs > ${Number.MAX_SAFE_INTEGER.toLocaleString()}`
+          ));
+        } else if (typeof sampleId === 'bigint') {
+          console.log(chalk.green(`✓ ID column "${this.options.idColumn}" is BigInt - precision preserved`));
+        } else if (typeof sampleId === 'string') {
+          console.log(chalk.green(`✓ ID column "${this.options.idColumn}" is String - precision preserved`));
+        } else {
+          console.warn(chalk.yellow(
+            `⚠️  ID column "${this.options.idColumn}" has unexpected type: ${typeof sampleId}`
+          ));
+        }
+      }
+    }
+
     let currentBatch: BatchRecord[] = [];
     let batchIndex = 0;
 
