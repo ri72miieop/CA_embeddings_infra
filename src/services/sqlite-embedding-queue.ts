@@ -7,7 +7,6 @@ interface QueueStats {
   pending: number;
   processing: number;
   failed: number;
-  completed: number;
 }
 
 export class SqliteEmbeddingQueue {
@@ -15,7 +14,6 @@ export class SqliteEmbeddingQueue {
   private logger = createContextLogger({ service: 'sqlite-embedding-queue' });
   private isProcessing = false;
   private isShuttingDown = false;
-  private processInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private dbPath: string,
@@ -46,16 +44,6 @@ export class SqliteEmbeddingQueue {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         error_message TEXT
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS embedding_completed (
-        key TEXT PRIMARY KEY,
-        vector BLOB NOT NULL,
-        metadata TEXT,
-        correlation_id TEXT,
-        completed_at TEXT NOT NULL
       )
     `);
 
@@ -132,31 +120,39 @@ export class SqliteEmbeddingQueue {
   }
 
   private startProcessor(): void {
-    this.processInterval = setInterval(async () => {
-      if (!this.isProcessing && !this.isShuttingDown) {
-        await this.processQueue();
-      }
-    }, this.processIntervalMs);
+    // Start continuous processing loop
+    this.runProcessorLoop();
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.isProcessing || this.isShuttingDown) return;
-
-    this.isProcessing = true;
-
-    try {
-      const result = await this.processPendingBatch();
-
-      if (result.processed > 0) {
-        this.logger.debug({
-          processed: result.processed,
-          failed: result.failed
-        }, 'Processed batch');
+  private async runProcessorLoop(): Promise<void> {
+    while (!this.isShuttingDown) {
+      if (this.isProcessing) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
       }
-    } catch (error) {
-      this.logger.error({ error }, 'Error processing queue');
-    } finally {
+
+      this.isProcessing = true;
+
+      try {
+        const result = await this.processPendingBatch();
+
+        if (result.processed > 0) {
+          this.logger.debug({
+            processed: result.processed,
+            failed: result.failed
+          }, 'Processed batch');
+          // Continue immediately to next batch if we processed something
+          this.isProcessing = false;
+          continue;
+        }
+      } catch (error) {
+        this.logger.error({ error }, 'Error processing queue');
+      }
+
       this.isProcessing = false;
+
+      // Only wait if queue was empty - check again after interval
+      await new Promise(resolve => setTimeout(resolve, this.processIntervalMs));
     }
   }
 
@@ -182,36 +178,15 @@ export class SqliteEmbeddingQueue {
       return { processed: 0, failed: 0 };
     }
 
-    let processed = 0;
-    let failed = 0;
+    // Skip marking as 'processing' - just delete on success
+    // Recovery mechanism handles crashes by resetting any 'processing' items on startup
 
-    const updateStmt = this.db.prepare(`
-      UPDATE embedding_queue
-      SET status = ?, updated_at = datetime('now'), error_message = ?
-      WHERE key = ?
-    `);
-
-    const moveToCompletedStmt = this.db.prepare(`
-      INSERT INTO embedding_completed (key, vector, metadata, correlation_id, completed_at)
-      VALUES (?, ?, ?, ?, datetime('now'))
-    `);
-
-    const deleteFromQueueStmt = this.db.prepare(`
-      DELETE FROM embedding_queue WHERE key = ?
-    `);
-
-    const updateRetryStmt = this.db.prepare(`
-      UPDATE embedding_queue
-      SET status = 'pending', retry_count = ?, updated_at = datetime('now'), error_message = ?
-      WHERE key = ?
-    `);
+    // Decompress all vectors and prepare embeddings
+    const embeddings: EmbeddingVector[] = [];
+    const rowsByKey = new Map<string, typeof rows[0]>();
 
     for (const row of rows) {
       try {
-        // Mark as processing
-        updateStmt.run('processing', null, row.key);
-
-        // Decompress vector using Bun native gunzip
         const compressedBuffer = Buffer.from(row.vector);
         const decompressed = Bun.gunzipSync(compressedBuffer);
         const vector = new Float32Array(
@@ -220,69 +195,87 @@ export class SqliteEmbeddingQueue {
           decompressed.byteLength / 4
         );
 
-        const embedding: EmbeddingVector = {
+        embeddings.push({
           key: row.key,
           vector,
           metadata: JSON.parse(row.metadata)
-        };
-
-        // Insert to vector store in chunks
-        await this.embeddingService.insert([embedding]);
-
-        // Move to completed table (transaction)
-        const transaction = this.db.transaction(() => {
-          moveToCompletedStmt.run(
-            row.key,
-            row.vector,
-            row.metadata,
-            row.correlation_id
-          );
-          deleteFromQueueStmt.run(row.key);
         });
-        transaction();
-
-        processed++;
-
-        // Record successful processing metric
-        queueProcessingRate.inc({ status: 'success' }, 1);
-
-        this.logger.debug({
-          key: row.key,
-          correlationId: row.correlation_id
-        }, 'Successfully processed queued embedding');
-
+        rowsByKey.set(row.key, row);
       } catch (error) {
-        const retryCount = row.retry_count + 1;
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-        // Record failure metric
-        queueProcessingRate.inc({ status: 'failure' }, 1);
-
-        if (retryCount <= this.maxRetries) {
-          // Retry - back to pending with incremented count
-          updateRetryStmt.run(retryCount, errorMessage, row.key);
-
-          // Record retry metric
-          queueRetryCount.inc();
-
-          this.logger.warn({
-            key: row.key,
-            retryCount,
-            maxRetries: this.maxRetries,
-            error: errorMessage
-          }, 'Failed to process queued embedding, will retry');
-        } else {
-          // Max retries exceeded - keep in failed state
-          updateStmt.run('failed', errorMessage, row.key);
-          failed++;
-
-          this.logger.error({
-            key: row.key,
-            retryCount,
-            error: errorMessage
-          }, 'Failed to process queued embedding after max retries');
-        }
+        // Decompression failed - mark as failed immediately
+        const errorMessage = error instanceof Error ? error.message : 'Decompression failed';
+        this.db.run(`
+          UPDATE embedding_queue
+          SET status = 'failed', error_message = ?, updated_at = datetime('now')
+          WHERE key = ?
+        `, [errorMessage, row.key]);
+        this.logger.error({ key: row.key, error: errorMessage }, 'Failed to decompress vector');
       }
+    }
+
+    if (embeddings.length === 0) {
+      return { processed: 0, failed: rows.length };
+    }
+
+    let processed = 0;
+    let failed = 0;
+
+    try {
+      // Batch insert to vector store - single HTTP call for all embeddings
+      await this.embeddingService.insert(embeddings);
+
+      // All succeeded - delete from queue in a single transaction
+      const successKeys = embeddings.map(e => e.key);
+      this.db.run(`
+        DELETE FROM embedding_queue
+        WHERE key IN (${successKeys.map(() => '?').join(',')})
+      `, successKeys);
+
+      processed = embeddings.length;
+
+      // Record metrics
+      queueProcessingRate.inc({ status: 'success' }, processed);
+
+      this.logger.info({ count: processed }, 'Successfully processed batch of embeddings');
+
+    } catch (error) {
+      // Batch insert failed - need to handle retry logic
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn({ error: errorMessage, count: embeddings.length }, 'Batch insert failed, will retry items');
+
+      // Record failure metrics
+      queueProcessingRate.inc({ status: 'failure' }, embeddings.length);
+
+      // Update all items for retry or mark as failed
+      const updateRetryStmt = this.db.prepare(`
+        UPDATE embedding_queue
+        SET status = 'pending', retry_count = ?, updated_at = datetime('now'), error_message = ?
+        WHERE key = ?
+      `);
+
+      const markFailedStmt = this.db.prepare(`
+        UPDATE embedding_queue
+        SET status = 'failed', error_message = ?, updated_at = datetime('now')
+        WHERE key = ?
+      `);
+
+      const transaction = this.db.transaction(() => {
+        for (const emb of embeddings) {
+          const row = rowsByKey.get(emb.key);
+          if (!row) continue;
+
+          const retryCount = row.retry_count + 1;
+
+          if (retryCount <= this.maxRetries) {
+            updateRetryStmt.run(retryCount, errorMessage, emb.key);
+            queueRetryCount.inc();
+          } else {
+            markFailedStmt.run(errorMessage, emb.key);
+            failed++;
+          }
+        }
+      });
+      transaction();
     }
 
     return { processed, failed };
@@ -292,13 +285,11 @@ export class SqliteEmbeddingQueue {
     const pending = this.db.query(`SELECT COUNT(*) as count FROM embedding_queue WHERE status = 'pending'`).get() as { count: number };
     const processing = this.db.query(`SELECT COUNT(*) as count FROM embedding_queue WHERE status = 'processing'`).get() as { count: number };
     const failed = this.db.query(`SELECT COUNT(*) as count FROM embedding_queue WHERE status = 'failed'`).get() as { count: number };
-    const completed = this.db.query(`SELECT COUNT(*) as count FROM embedding_completed`).get() as { count: number };
 
     return {
       pending: pending.count,
       processing: processing.count,
-      failed: failed.count,
-      completed: completed.count
+      failed: failed.count
     };
   }
 
@@ -316,14 +307,8 @@ export class SqliteEmbeddingQueue {
   async shutdown(): Promise<void> {
     this.logger.info('Shutting down SQLite embedding queue...');
 
-    // Signal shutdown
+    // Signal shutdown - this will stop the processor loop
     this.isShuttingDown = true;
-
-    // Stop the background processor interval
-    if (this.processInterval) {
-      clearInterval(this.processInterval);
-      this.processInterval = null;
-    }
 
     // Wait for current processing to complete
     while (this.isProcessing) {
@@ -335,8 +320,7 @@ export class SqliteEmbeddingQueue {
     this.logger.info({
       pending: stats.pending,
       processing: stats.processing,
-      failed: stats.failed,
-      completed: stats.completed
+      failed: stats.failed
     }, 'SQLite queue shutdown complete');
   }
 

@@ -70,7 +70,6 @@ export class EmbeddingWriteQueueManager {
       pending: number;
       processing: number;
       failed: number;
-      completed: number;
     };
   }> {
     const stats = this.queue.getStats();
@@ -82,8 +81,7 @@ export class EmbeddingWriteQueueManager {
       queue: {
         pending: stats.pending,
         processing: stats.processing,
-        failed: stats.failed,
-        completed: stats.completed
+        failed: stats.failed
       }
     };
   }
@@ -157,7 +155,6 @@ export class EmbeddingWriteQueueManager {
       queueFileCount.set({ status: 'pending' }, stats.pending);
       queueFileCount.set({ status: 'processing' }, stats.processing);
       queueFileCount.set({ status: 'failed' }, stats.failed);
-      queueFileCount.set({ status: 'completed' }, stats.completed);
     } catch (error) {
       // Log but don't throw - metrics update failures shouldn't break operations
       this.logger.debug({ error }, 'Failed to update queue metrics');

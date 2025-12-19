@@ -182,8 +182,7 @@ export async function createServer() {
       logger.info({
         pending: stats.queue.pending,
         processing: stats.queue.processing,
-        failed: stats.queue.failed,
-        completed: stats.queue.completed
+        failed: stats.queue.failed
       }, 'Final queue stats before shutdown');
 
       await embeddingWriteQueue.shutdown();
