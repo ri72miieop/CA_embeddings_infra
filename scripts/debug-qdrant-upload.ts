@@ -93,16 +93,16 @@ async function debugUpload() {
 
   // Test 1: Try with key as 64-bit unsigned integer (using BigInt)
   console.log('Test 1: Using key as 64-BIT UNSIGNED INTEGER (via BigInt)');
-  const bigIntKey = BigInt(firstRow.key);
-  const numericKey = Number(bigIntKey);
-  
+  // The cast to `number` is compile-time only - the value remains a bigint at runtime.
+  // Qdrant client serializes bigint correctly via JSON.rawJSON (requires Bun 1.2+).
+  const pointId = BigInt(firstRow.key) as unknown as number;
+
   console.log('Original key (string):', firstRow.key);
-  console.log('BigInt representation:', bigIntKey.toString());
-  console.log('Number (for Qdrant):', numericKey);
-  console.log('Is within safe integer range:', bigIntKey <= BigInt(Number.MAX_SAFE_INTEGER));
-  
+  console.log('BigInt representation:', pointId.toString());
+  console.log('Is within safe integer range:', BigInt(firstRow.key) <= BigInt(Number.MAX_SAFE_INTEGER));
+
   const point1 = {
-    id: numericKey, // This will be handled as u64 by Qdrant backend
+    id: pointId,
     vector: vector,
     payload: {
       key: firstRow.key,

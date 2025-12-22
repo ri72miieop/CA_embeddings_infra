@@ -398,34 +398,13 @@ async function uploadToQdrant(
       const uploadPromise = (async () => {
         // Prepare points outside try-catch for error reporting
         const points = batch.map((emb) => {
-          // Convert key to 64-bit unsigned integer for Qdrant
-          // Use BigInt for proper handling of large integers, then convert to Number
-          // Qdrant backend handles this as u64 (64-bit unsigned integer)
-          let numericId: number;
-          
-          if (typeof emb.key === 'string') {
-            try {
-              // Parse as BigInt to handle large integers properly
-              const bigIntId = BigInt(emb.key);
-              // Convert to Number for Qdrant client (backend handles as u64)
-              numericId = Number(bigIntId);
-              
-              // Check if we're losing precision (for safety)
-              if (bigIntId > BigInt(Number.MAX_SAFE_INTEGER)) {
-                // For very large IDs beyond safe integer range, we still use Number
-                // Qdrant backend will handle the u64 properly
-                numericId = Number(bigIntId);
-              }
-            } catch (e) {
-              // Fallback to direct Number conversion
-              numericId = Number(emb.key);
-            }
-          } else {
-            numericId = emb.key;
-          }
-          
+          // Use BigInt to preserve full 64-bit precision for tweet IDs.
+          // The cast to `number` is compile-time only - the value remains a bigint at runtime.
+          // Qdrant client serializes bigint correctly via JSON.rawJSON (requires Bun 1.2+).
+          const pointId = BigInt(emb.key) as unknown as number;
+
           return {
-            id: numericId,
+            id: pointId,
             vector: emb.vector,
             payload: {
               key: emb.key, // Keep original string key in payload for reference

@@ -1108,14 +1108,16 @@ export class QdrantVectorStore implements IVectorStore {
     let offset: string | number | null = null;
     let totalYielded = 0;
 
-    // Build filter for ID range
+    // Build filter for ID range.
+    // The casts to `number` are compile-time only - values remain bigint at runtime.
+    // Qdrant client serializes bigint correctly via JSON.rawJSON (requires Bun 1.2+).
     const rangeFilter = {
       must: [
         {
           key: 'id', // Special Qdrant filter for point ID
           range: {
-            gte: Number(minId),
-            lte: Number(maxId),
+            gte: BigInt(minId) as unknown as number,
+            lte: BigInt(maxId) as unknown as number,
           },
         },
       ],
