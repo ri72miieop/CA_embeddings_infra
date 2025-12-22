@@ -19,7 +19,6 @@
     "analyze-failed-queue": "bun run scripts/analyze-failed-queue-items.ts --type failed",
     "analyze-completed-queue": "bun run scripts/analyze-failed-queue-items.ts --type completed",
     "analyze-queue": "bun run scripts/analyze-failed-queue-items.ts",
-    "supabase-listen": "bun run scripts/supabase-tweets-listener.ts",
     "benchmark": "bun run scripts/benchmark-vector-store.ts",
     "download-images": "bun run --expose-gc scripts/download_images.ts",
     "update-metadata": "bun run scripts/update-metadata.ts"
