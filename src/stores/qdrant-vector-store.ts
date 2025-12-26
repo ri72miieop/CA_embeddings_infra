@@ -242,6 +242,13 @@ export class QdrantVectorStore implements IVectorStore {
         filter,
         with_payload: true,
         score_threshold: query.threshold,
+        params: {
+          hnsw_ef: 128,
+          quantization: {
+            rescore: true,
+            oversampling: 2,
+          },
+        },
       });
 
       const results: SearchResult[] = searchResults.map(result => {
