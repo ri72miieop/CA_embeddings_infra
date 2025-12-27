@@ -182,7 +182,10 @@ go run qdrant_exporter_r2.go --strategy parquet-small
 go run qdrant_exporter_r2.go --strategy parquet-med --row-group-size 5000
 
 # High-memory machine, maximum speed
-go run qdrant_exporter_r2.go --strategy parquet-large
+go run qdrant_exporter_r2.go --strategy parquet-large 
+
+# High-memory machine, maximum speed, stream as it comes
+go run qdrant_exporter_r2.go --strategy parquet-large --stream-upload
 ```
 
 ## HTTP vs gRPC
