@@ -20,6 +20,8 @@
     "analyze-completed-queue": "bun run scripts/analyze-failed-queue-items.ts --type completed",
     "analyze-queue": "bun run scripts/analyze-failed-queue-items.ts",
     "benchmark": "bun run scripts/benchmark-vector-store.ts",
+    "benchmark-configs": "bun run scripts/benchmark-qdrant-configs.ts",
+    "benchmark-visualize": "bun run scripts/visualize-benchmark.ts",
     "download-images": "bun run --expose-gc scripts/download_images.ts",
     "update-metadata": "bun run scripts/update-metadata.ts"
   },
