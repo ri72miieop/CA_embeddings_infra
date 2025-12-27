@@ -102,6 +102,9 @@ export class QdrantVectorStore implements IVectorStore {
       // Ensure payload indexes exist for text fields (works for both new and existing collections)
       await this.ensurePayloadIndexes(contextLogger);
 
+      // Ensure quantization is configured for optimal search performance
+      await this.ensureQuantizationConfig(contextLogger);
+
       this.isInitialized = true;
       contextLogger.info('Qdrant client initialized successfully');
       span.setStatus({ code: SpanStatusCode.OK });
@@ -347,6 +350,80 @@ export class QdrantVectorStore implements IVectorStore {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       contextLogger.warn(`Failed to ensure payload indexes: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Desired quantization configuration for optimal search performance.
+   * Binary quantization with 2-bit encoding provides a good balance between
+   * compression (16x) and recall accuracy, while fitting in available RAM.
+   */
+  private static readonly DESIRED_QUANTIZATION_CONFIG = {
+    binary: {
+      always_ram: true,
+      // 2-bit encoding: 16x compression with better recall than 1-bit
+      // Alternatives: undefined (1-bit, 32x), 'one_and_half_bits' (24x)
+      // encoding: 'two_bits' as const,
+    },
+  };
+
+  /**
+   * Ensure quantization is configured for optimal search performance.
+   * Checks current config and updates if needed (only logs warning, doesn't auto-update
+   * because quantization changes trigger re-indexing which can take significant time).
+   */
+  private async ensureQuantizationConfig(contextLogger: any): Promise<void> {
+    try {
+      const collectionInfo = await this.client!.getCollection(this.collectionName);
+      const currentConfig = collectionInfo.config?.quantization_config;
+
+      // Check if quantization is configured
+      if (!currentConfig) {
+        contextLogger.warn(
+          'Quantization is not configured. For optimal search performance, enable binary quantization. '
+        );
+        return;
+      }
+
+      // Log current quantization config
+      if ('binary' in currentConfig) {
+        const binaryConfig = currentConfig.binary as any;
+        const encoding = binaryConfig?.encoding || '1-bit (default)';
+        const alwaysRam = binaryConfig?.always_ram ?? false;
+        contextLogger.info({
+          type: 'binary',
+          encoding,
+          always_ram: alwaysRam,
+        }, 'Quantization configured');
+      } else if ('scalar' in currentConfig) {
+        const scalarConfig = currentConfig.scalar as any;
+        contextLogger.info({
+          type: 'scalar',
+          scalar_type: scalarConfig?.type,
+          quantile: scalarConfig?.quantile,
+          always_ram: scalarConfig?.always_ram ?? false,
+        }, 'Quantization configured');
+      } else if ('product' in currentConfig) {
+        const productConfig = currentConfig.product as any;
+        contextLogger.info({
+          type: 'product',
+          compression: productConfig?.compression,
+          always_ram: productConfig?.always_ram ?? false,
+        }, 'Quantization configured');
+      }
+
+      // Note: We intentionally don't auto-update quantization config because:
+      // 1. Changing quantization triggers re-indexing (can take 10-30+ minutes for 9M vectors)
+      // 2. This should be a deliberate decision by the operator
+      // 3. The current config might be intentional (e.g., testing different settings)
+      //
+      // To update quantization, use the Qdrant API directly:
+      // PUT /collections/{collection}/
+      // { "quantization_config": { "binary": { "always_ram": true, "encoding": "two_bits" } } }
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      contextLogger.warn(`Failed to check quantization config: ${errorMessage}`);
     }
   }
 
